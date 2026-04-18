@@ -1,6 +1,14 @@
 import { getServerSupabase } from "@/lib/supabase";
 import type { UserRank } from "@/types";
 
+/** Subset of user_stats columns needed by matchmaking / stamina. */
+export interface UserStatsLite {
+  demonAffinity: Record<string, number>;
+  battlesToday: number;
+  lastBattleDate: string | null;
+  possessedByDemonId: number | null;
+}
+
 /**
  * Validates that the given string is a plausible anon user id (UUID format).
  * If not, returns null so the caller can create a fresh user.
@@ -55,6 +63,43 @@ export async function ensureAnonUser(
   // Initialize user_ranks row so later reads always find something.
   await supabase.from("user_ranks").insert([{ user_id: data.id, rp: 0 }]);
   return data.id;
+}
+
+/**
+ * Fetches user_stats.{demon_affinity, battles_today, last_battle_date,
+ * possessed_by_demon_id}. Returns defaults if the row is missing.
+ * Lazily resets battles_today to 0 if last_battle_date < today (day rollover).
+ */
+export async function getUserStats(userId: string): Promise<UserStatsLite> {
+  const supabase = getServerSupabase();
+  const today = new Date().toISOString().slice(0, 10);
+
+  const { data } = await supabase
+    .from("user_stats")
+    .select("demon_affinity, battles_today, last_battle_date, possessed_by_demon_id")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (!data) {
+    return {
+      demonAffinity: {},
+      battlesToday: 0,
+      lastBattleDate: null,
+      possessedByDemonId: null,
+    };
+  }
+
+  // Lazy day-rollover: if last battle wasn't today, battles_today is effectively 0.
+  const lastDate = (data.last_battle_date as string | null) ?? null;
+  const battlesToday =
+    lastDate === today ? (data.battles_today as number) ?? 0 : 0;
+
+  return {
+    demonAffinity: (data.demon_affinity as Record<string, number> | null) ?? {},
+    battlesToday,
+    lastBattleDate: lastDate,
+    possessedByDemonId: (data.possessed_by_demon_id as number | null) ?? null,
+  };
 }
 
 /** Fetches the user's rank row, creating a default one if missing. */

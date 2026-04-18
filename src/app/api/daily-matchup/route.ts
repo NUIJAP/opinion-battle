@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ensureAnonUser, getUserRank } from "@/lib/users";
+import { ensureAnonUser, getUserRank, getUserStats } from "@/lib/users";
 import { getOrCreateTodayMatchups } from "@/lib/matchmaking";
 import { getRankFromRp } from "@/lib/ranking";
 import type { DailyMatchupResponse } from "@/types";
+
+const DAILY_BATTLE_LIMIT = 3;
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,9 +21,13 @@ export async function GET(req: NextRequest) {
     const rawUserId = url.searchParams.get("userId");
     const userId = await ensureAnonUser(rawUserId);
     const rank = await getUserRank(userId);
-    const matchups = await getOrCreateTodayMatchups(userId, rank.rp);
+    const [matchups, stats] = await Promise.all([
+      getOrCreateTodayMatchups(userId, rank.rp),
+      getUserStats(userId),
+    ]);
     const rankTier = getRankFromRp(rank.rp);
 
+    const battlesToday = stats.battlesToday;
     const response: DailyMatchupResponse = {
       userId,
       matchups,
@@ -31,6 +37,12 @@ export async function GET(req: NextRequest) {
         totalBattles: rank.total_battles,
         totalWins: rank.total_wins,
         streakDays: rank.streak_days,
+      },
+      stamina: {
+        battlesToday,
+        max: DAILY_BATTLE_LIMIT,
+        remaining: Math.max(0, DAILY_BATTLE_LIMIT - battlesToday),
+        lastBattleDate: stats.lastBattleDate,
       },
     };
     return NextResponse.json(response);

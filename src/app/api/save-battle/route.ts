@@ -185,8 +185,10 @@ export async function POST(req: NextRequest) {
         .eq("theme_id", body.theme_id);
     }
 
-    // ---- user_stats fold (Stage C: 8 new bipolar axes) ----
-    if (inputAxesList.length > 0 || summonedHelpers.length > 0) {
+    // ---- user_stats fold (Stage C axes) + Stage D stamina tick ----
+    // Always upsert user_stats, even if no axes changed, so battles_today stays
+    // accurate for the 1-day-3-battle stamina model.
+    {
       const { data: existing } = await supabase
         .from("user_stats")
         .select("*")
@@ -194,7 +196,15 @@ export async function POST(req: NextRequest) {
         .maybeSingle();
       const prev = (existing as UserStats | null) ?? ZERO_STATS(userId);
 
-      const next = foldDelta(prev, battleDelta);
+      const next =
+        inputAxesList.length > 0 || summonedHelpers.length > 0
+          ? foldDelta(prev, battleDelta)
+          : prev;
+
+      // Stage D stamina: bump battles_today (reset to 1 if day rolled over).
+      const prevDate = (prev.last_battle_date ?? null) as string | null;
+      const prevCount = (prev.battles_today ?? 0) as number;
+      const newBattlesToday = prevDate === today ? prevCount + 1 : 1;
 
       await supabase
         .from("user_stats")
@@ -211,6 +221,8 @@ export async function POST(req: NextRequest) {
               ax_mockery_empathy: next.ax_mockery_empathy,
               ax_deception_honesty: next.ax_deception_honesty,
               samples: next.samples,
+              battles_today: newBattlesToday,
+              last_battle_date: today,
               updated_at: new Date().toISOString(),
             },
           ],

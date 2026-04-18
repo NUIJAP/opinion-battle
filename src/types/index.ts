@@ -303,6 +303,18 @@ export interface SaveBattleResponse {
 
 // ---- Matchup API ----
 
+/** Stage D: 1-day stamina model. MVP = warning only (not blocking). */
+export interface StaminaInfo {
+  /** Battles logged today. Resets to 0 at day rollover. */
+  battlesToday: number;
+  /** Daily limit (currently 3). */
+  max: number;
+  /** max - battlesToday, clamped to 0. */
+  remaining: number;
+  /** ISO yyyy-mm-dd of the last battle, or null if never fought. */
+  lastBattleDate: string | null;
+}
+
 export interface DailyMatchupResponse {
   userId: string; // anon user id (client stores in localStorage)
   matchups: Matchup[];
@@ -313,4 +325,6 @@ export interface DailyMatchupResponse {
     totalWins: number;
     streakDays: number;
   };
+  /** Stage D stamina info. */
+  stamina: StaminaInfo;
 }

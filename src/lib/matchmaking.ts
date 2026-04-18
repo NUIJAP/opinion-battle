@@ -1,7 +1,11 @@
 import { getServerSupabase } from "@/lib/supabase";
 import { getAllAiLevels, tierForId } from "@/lib/ai-levels";
 import { getUserTier } from "@/lib/ranking";
+import { getUserStats } from "@/lib/users";
 import type { AiLevel, DifficultyTag, Matchup, Theme } from "@/types";
+
+/** Default per-demon weight when user has never played (uniform). */
+const DEFAULT_AFFINITY = 0.05;
 
 /**
  * Deterministic PRNG so a user re-opening the page on the same day
@@ -41,6 +45,29 @@ function pickN<T>(items: T[], n: number, rand: () => number): T[] {
   return out;
 }
 
+/**
+ * Weighted pick within a pool. Falls back to uniform random when:
+ *   - the pool is empty (returns undefined)
+ *   - all weights are 0 or negative
+ * Otherwise picks by roulette-wheel proportional to weights.
+ */
+function weightedPick<T>(
+  items: T[],
+  weightFor: (item: T) => number,
+  rand: () => number,
+): T | undefined {
+  if (items.length === 0) return undefined;
+  const weights = items.map((it) => Math.max(0, weightFor(it)));
+  const total = weights.reduce((a, b) => a + b, 0);
+  if (total <= 0) return items[Math.floor(rand() * items.length)];
+  let r = rand() * total;
+  for (let i = 0; i < items.length; i++) {
+    r -= weights[i];
+    if (r <= 0) return items[i];
+  }
+  return items[items.length - 1];
+}
+
 interface PickedMatchup {
   slot: number;
   theme: Theme;
@@ -55,18 +82,23 @@ interface PickedMatchup {
  *   slot 3 = above (格上)
  * Each slot uses a distinct theme so the user never plays the same
  * theme twice in a day's set.
+ *
+ * Stage D: within each tier pool, picks are weighted by `affinities`
+ * (demon_affinity from user_stats). If affinity is missing or 0, defaults
+ * to 1/20 per demon so all demons keep a chance even on day 1.
  */
 export function buildMatchupsInMemory(
   userId: string,
   date: string, // YYYY-MM-DD
   userRp: number,
   themes: Theme[],
-  aiLevels: AiLevel[]
+  aiLevels: AiLevel[],
+  affinities: Record<string, number> = {},
 ): PickedMatchup[] {
   if (themes.length === 0 || aiLevels.length === 0) return [];
 
   const rand = mulberry32(hashSeed(`${userId}:${date}`));
-  const userTier = getUserTier(userRp); // 1-5
+  const userTier = getUserTier(userRp); // 1-6
 
   // Pick 3 distinct themes (or all available if fewer).
   const pickedThemes = pickN(themes, 3, rand);
@@ -75,6 +107,9 @@ export function buildMatchupsInMemory(
   while (pickedThemes.length < 3 && themes.length > 0) {
     pickedThemes.push(themes[pickedThemes.length % themes.length]);
   }
+
+  const weightFor = (l: AiLevel): number =>
+    affinities[String(l.id)] ?? DEFAULT_AFFINITY;
 
   const tags: DifficultyTag[] = ["below", "equal", "above"];
   const matchups: PickedMatchup[] = [];
@@ -90,14 +125,17 @@ export function buildMatchupsInMemory(
       (l) => (l.tier ?? tierForId(l.id)) === targetTier && !usedIds.has(l.id)
     );
 
-    let aiLevel: AiLevel;
+    let aiLevel: AiLevel | undefined;
     if (candidates.length > 0) {
-      aiLevel = candidates[Math.floor(rand() * candidates.length)];
-    } else {
-      // Tier empty (or all used) → fall back to nearest tier.
+      aiLevel = weightedPick(candidates, weightFor, rand);
+    }
+    if (!aiLevel) {
+      // Tier empty (or all used) → fall back to nearest tier, weighted.
       const fallbackPool = aiLevels.filter((l) => !usedIds.has(l.id));
       const pool = fallbackPool.length > 0 ? fallbackPool : aiLevels;
-      aiLevel = pool[Math.floor(rand() * pool.length)];
+      aiLevel =
+        weightedPick(pool, weightFor, rand) ??
+        pool[Math.floor(rand() * pool.length)];
     }
     usedIds.add(aiLevel.id);
 
@@ -135,10 +173,11 @@ export async function getOrCreateTodayMatchups(
     return hydrateMatchups(existing);
   }
 
-  // 2) Build fresh. Load themes + AI levels in parallel.
-  const [themesRes, aiLevels] = await Promise.all([
+  // 2) Build fresh. Load themes + AI levels + user_stats (affinity) in parallel.
+  const [themesRes, aiLevels, userStats] = await Promise.all([
     supabase.from("themes").select("*").eq("active", true),
     getAllAiLevels(),
+    getUserStats(userId),
   ]);
 
   const themes = (themesRes.data ?? []) as Theme[];
@@ -146,7 +185,14 @@ export async function getOrCreateTodayMatchups(
     return [];
   }
 
-  const picks = buildMatchupsInMemory(userId, today, userRp, themes, aiLevels);
+  const picks = buildMatchupsInMemory(
+    userId,
+    today,
+    userRp,
+    themes,
+    aiLevels,
+    userStats.demonAffinity,
+  );
   if (picks.length === 0) return [];
 
   // 3) Persist so repeat opens on the same day are stable.

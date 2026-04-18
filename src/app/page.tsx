@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { DailyMatchupResponse, Matchup } from "@/types";
+import type { DailyMatchupResponse, Matchup, StaminaInfo } from "@/types";
 import { getRankFromRp } from "@/lib/ranking";
 import MatchupCard from "@/components/MatchupCard";
 import RankDisplay from "@/components/RankDisplay";
@@ -19,6 +19,7 @@ interface RankSummary {
 export default function HomePage() {
   const [matchups, setMatchups] = useState<Matchup[] | null>(null);
   const [rank, setRank] = useState<RankSummary | null>(null);
+  const [stamina, setStamina] = useState<StaminaInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -43,6 +44,7 @@ export default function HomePage() {
         }
         setMatchups(data.matchups);
         setRank(data.rank);
+        setStamina(data.stamina);
       } catch (err) {
         console.error("[home] load failed:", err);
         if (!cancelled) setError("マッチアップの取得に失敗しました");
@@ -79,10 +81,12 @@ export default function HomePage() {
         />
       )}
 
+      {stamina && <StaminaBadge stamina={stamina} />}
+
       <section>
         <div className="flex items-baseline justify-between mb-2 px-1">
           <h2 className="text-sm font-bold text-slate-200">
-            今日の獄吏 <span className="text-slate-400 font-normal">3戦</span>
+            今日の悪魔 <span className="text-slate-400 font-normal">3戦</span>
           </h2>
           <span className="text-[10px] text-slate-500 font-mono">
             {new Date().toLocaleDateString("ja-JP")}
@@ -105,8 +109,48 @@ export default function HomePage() {
       </section>
 
       <footer className="text-center text-[10px] text-slate-600 pt-4">
-        Phase 2A Stage A · 10獄吏稼働
+        Phase 3a Stage D · 20 悪魔 (Goetia) 稼働
       </footer>
+    </div>
+  );
+}
+
+function StaminaBadge({ stamina }: { stamina: StaminaInfo }) {
+  const { battlesToday, max, remaining } = stamina;
+  const exhausted = remaining <= 0;
+  const dots = Array.from({ length: max }, (_, i) => i < battlesToday);
+
+  return (
+    <div
+      className={`flex items-center justify-between gap-2 px-3 py-2 rounded-xl border text-xs ${
+        exhausted
+          ? "bg-rose-950/40 border-rose-800/60 text-rose-200"
+          : "bg-slate-800/60 border-slate-700 text-slate-300"
+      }`}
+    >
+      <div className="flex items-center gap-2">
+        <span className="text-[10px] uppercase tracking-wider opacity-70">
+          本日
+        </span>
+        <span className="font-mono font-bold">
+          {battlesToday}/{max}
+        </span>
+        <div className="flex gap-0.5">
+          {dots.map((filled, i) => (
+            <span
+              key={i}
+              className={`w-1.5 h-1.5 rounded-full ${
+                filled ? "bg-rose-400" : "bg-slate-600"
+              }`}
+            />
+          ))}
+        </div>
+      </div>
+      <span className="text-[10px] opacity-80">
+        {exhausted
+          ? "本日は既に3戦済。明日また戦え。"
+          : `残り ${remaining} 戦`}
+      </span>
     </div>
   );
 }
