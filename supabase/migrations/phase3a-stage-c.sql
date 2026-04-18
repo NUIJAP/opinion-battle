@@ -32,6 +32,8 @@ alter table public.ai_levels
 -- Drop the Stage A range constraint that referenced the old columns.
 alter table public.ai_levels drop constraint if exists ai_levels_8axis_range;
 alter table public.ai_levels drop constraint if exists ai_levels_stats_range;
+-- Stage A constrained `tier` to 1-5; Phase 3a introduces tier=6 (SS), so drop it.
+alter table public.ai_levels drop constraint if exists ai_levels_tier_range;
 
 alter table public.ai_levels
   add column if not exists tier_letter      varchar(2),

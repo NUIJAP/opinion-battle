@@ -129,6 +129,25 @@ export interface UserStats {
   /** Number of battle deltas folded into this row. <5 = 「判定中」 */
   samples: number;
   updated_at?: string;
+
+  // ---- Stage D fields (all optional until migration is applied) ----
+  /** demon_id(string) → appearance rate (0..1). 20 demons, default uniform 0.05. */
+  demon_affinity?: Record<string, number> | null;
+  /** Battles played today (resets to 0 when last_battle_date < today). */
+  battles_today?: number;
+  /** Last date a battle was logged (ISO yyyy-mm-dd). */
+  last_battle_date?: string | null;
+  /** ai_levels.id of the demon the user has been possessed by. NULL = not possessed. */
+  possessed_by_demon_id?: number | null;
+  possessed_at?: string | null;
+}
+
+/** Stage D: a self-contained snapshot of the user's character used by the
+ *  RONGOKU-XXX-YYY-Z character code. 8 axes + 20 demon affinities. */
+export interface CharacterState {
+  axes: Axes8;
+  /** demonId (1..20) → appearance rate (0..1). */
+  demonAffinities: Record<number, number>;
 }
 
 /** Helper character pick + match % vs the current theme. */
