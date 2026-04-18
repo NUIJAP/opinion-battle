@@ -2,7 +2,9 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getServerSupabase } from "@/lib/supabase";
 import RpBonus from "@/components/RpBonus";
-import type { BattleResult, CounterChoice, Theme } from "@/types";
+import PersonalitySection from "@/components/PersonalitySection";
+import { AXIS_KEYS } from "@/types";
+import type { Axes8, BattleResult, Theme } from "@/types";
 
 export const dynamic = "force-dynamic";
 
@@ -18,7 +20,6 @@ interface PageProps {
 }
 
 export default async function ResultPage({ params, searchParams }: PageProps) {
-  // Fallback path: if saving failed we get here via /result/local?...
   if (params.battleId === "local") {
     return (
       <ResultView
@@ -72,6 +73,20 @@ interface ResultViewProps {
   battleId?: string;
 }
 
+/** Strongest user response of the battle (highest sum of axes). */
+function bestUserResponse(history: BattleResult["battle_history"] | undefined) {
+  if (!history) return null;
+  const scored = history
+    .filter((r) => r.userInput && r.userInputAxes)
+    .map((r) => {
+      const axes = r.userInputAxes as Axes8;
+      const total = AXIS_KEYS.reduce((s, k) => s + axes[k], 0);
+      return { round: r.round, input: r.userInput as string, axes, total };
+    })
+    .sort((a, b) => b.total - a.total);
+  return scored[0] ?? null;
+}
+
 function ResultView({
   score,
   result,
@@ -91,13 +106,7 @@ function ResultView({
       : { emoji: "🤝", text: "引き分け", color: "text-yellow-400" };
 
   const rank = rankFromScore(score);
-
-  // Extract the counter-arguments the user actually threw, with their round numbers.
-  const counters =
-    battleHistory
-      ?.filter((r) => !!r.userCounter)
-      .map((r) => ({ round: r.round, counter: r.userCounter as CounterChoice })) ??
-    [];
+  const best = bestUserResponse(battleHistory);
 
   return (
     <div className="w-full max-w-md mx-auto px-4 py-10 space-y-4">
@@ -148,7 +157,7 @@ function ResultView({
           <ShareButton
             score={score}
             themeTitle={themeTitle}
-            topCounter={counters[0]?.counter}
+            bestInput={best?.input}
           />
         </div>
 
@@ -159,53 +168,21 @@ function ResultView({
         )}
       </div>
 
-      {/* Highlight: the user's counter-arguments */}
-      {counters.length > 0 && <CounterHighlights counters={counters} />}
-    </div>
-  );
-}
+      {savedToDb && <PersonalitySection />}
 
-function CounterHighlights({
-  counters,
-}: {
-  counters: Array<{ round: number; counter: CounterChoice }>;
-}) {
-  return (
-    <div className="bg-slate-800/70 border border-slate-700 rounded-2xl p-5 shadow-xl">
-      <div className="flex items-center justify-between mb-3">
-        <h2 className="text-sm font-bold text-slate-200">
-          ⚔️ あなたの決定打
-          <span className="text-xs text-slate-400 font-normal ml-2">
-            ({counters.length}発)
-          </span>
-        </h2>
-      </div>
-      <p className="text-xs text-slate-400 mb-4 leading-relaxed">
-        反論を選んでAIに刺した瞬間。これがスコアを押し上げた議論です。
-      </p>
-      <div className="space-y-3">
-        {counters.map(({ round, counter }) => (
-          <div
-            key={`${round}-${counter.id}`}
-            className="bg-slate-900/50 border border-slate-700 rounded-xl p-3"
-          >
-            <div className="flex items-center gap-2 mb-2">
-              <span className="text-xs text-slate-400 font-mono">
-                Round {round}
-              </span>
-              <span className="text-xs px-2 py-0.5 bg-red-500/20 text-red-300 rounded-full">
-                {counter.angle}
-              </span>
-            </div>
-            <p className="text-sm font-semibold text-slate-100 mb-1">
-              {counter.label}
-            </p>
-            <p className="text-xs text-slate-300 leading-relaxed">
-              「{counter.statement}」
-            </p>
-          </div>
-        ))}
-      </div>
+      {best && (
+        <div className="bg-slate-800/70 border border-slate-700 rounded-2xl p-5 shadow-xl">
+          <h2 className="text-sm font-bold text-slate-200 mb-2">
+            ⚔️ あなたの最強応答
+            <span className="text-xs text-slate-400 font-normal ml-2">
+              Round {best.round}
+            </span>
+          </h2>
+          <p className="text-sm text-slate-100 leading-relaxed bg-slate-900/50 rounded-xl p-3">
+            「{best.input}」
+          </p>
+        </div>
+      )}
     </div>
   );
 }
@@ -213,17 +190,15 @@ function CounterHighlights({
 function ShareButton({
   score,
   themeTitle,
-  topCounter,
+  bestInput,
 }: {
   score: number;
   themeTitle: string;
-  topCounter?: CounterChoice;
+  bestInput?: string;
 }) {
-  // Include the best counter in the share text if the user threw one.
-  const counterLine = topCounter
-    ? `\n決め手: 「${topCounter.label}」(${topCounter.angle})\n`
-    : "\n";
-  const text = `「${themeTitle}」で${score.toLocaleString()}点を取ったぞ。${counterLine}立場BATTLEで俺に勝てる？ #立場BATTLE`;
+  const trim = bestInput && bestInput.length > 40 ? bestInput.slice(0, 38) + "…" : bestInput;
+  const inputLine = trim ? `\n決め手:「${trim}」\n` : "\n";
+  const text = `「${themeTitle}」で${score.toLocaleString()}点を取った。${inputLine}論獄で俺に勝てる？ #論獄`;
   const url = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}`;
   return (
     <a

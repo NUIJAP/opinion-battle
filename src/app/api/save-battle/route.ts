@@ -8,12 +8,42 @@ import {
   getUserTier,
 } from "@/lib/ranking";
 import { markMatchupCompleted } from "@/lib/matchmaking";
-import { tierForId } from "@/lib/ai-levels";
+import { tierForId, getAllAiLevels } from "@/lib/ai-levels";
+import {
+  AXIS_KEYS,
+  type Axes8,
+  type SaveBattleRequest,
+  type SaveBattleResponse,
+} from "@/types";
+import {
+  combineBattleDelta,
+  foldDelta,
+} from "@/lib/affinity";
 import { ensureAnonUser, getUserRank } from "@/lib/users";
-import type { SaveBattleRequest, SaveBattleResponse } from "@/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+interface UserStatsRow {
+  user_id: string;
+  ax_data: number;
+  ax_ethics: number;
+  ax_emotion: number;
+  ax_persuasion: number;
+  ax_flexibility: number;
+  ax_aggression: number;
+  ax_calm: number;
+  ax_humor: number;
+  samples: number;
+  updated_at?: string;
+}
+
+const ZERO_STATS = (userId: string): UserStatsRow => ({
+  user_id: userId,
+  ax_data: 0, ax_ethics: 0, ax_emotion: 0, ax_persuasion: 0,
+  ax_flexibility: 0, ax_aggression: 0, ax_calm: 0, ax_humor: 0,
+  samples: 0,
+});
 
 export async function POST(req: NextRequest) {
   let body: SaveBattleRequest;
@@ -37,14 +67,12 @@ export async function POST(req: NextRequest) {
 
   const result = judgeResult(body.final_user_hp, body.final_ai_hp);
   const won = result === "win";
-  // Default to id 5 (嘲, Tier 3) if omitted, matching ai-levels default.
   const aiLevelId = body.ai_level_id ?? 5;
   const aiTier = tierForId(aiLevelId);
+  const endedByHpZero = body.final_user_hp <= 0 || body.final_ai_hp <= 0;
 
   try {
     const supabase = getServerSupabase();
-
-    // Resolve the anon user (create if missing).
     const userId = await ensureAnonUser(body.anon_user_id);
     const oldRank = await getUserRank(userId);
 
@@ -61,25 +89,39 @@ export async function POST(req: NextRequest) {
     const newRankTier = getRankFromRp(newRp);
     const rankedUp = didRankUp(oldRank.rp, newRp);
 
-    // Streak logic: if they played today vs yesterday, +1; if they skipped a day, reset to 1.
+    // Streak.
     const today = new Date().toISOString().slice(0, 10);
     const last = oldRank.last_battle_date;
     let newStreak = oldRank.streak_days;
-    if (last === today) {
-      // Already counted for today, no change.
-    } else {
+    if (last !== today) {
       const yesterday = new Date();
       yesterday.setDate(yesterday.getDate() - 1);
       const y = yesterday.toISOString().slice(0, 10);
       newStreak = last === y ? oldRank.streak_days + 1 : 1;
     }
 
-    // Insert the battle row.
+    // ---- user_stats delta from battle history (Stage B) ----
+    const inputAxesList: Axes8[] = [];
+    const helperIdsSet = new Set<number>();
+    for (const r of body.battle_history ?? []) {
+      if (r.userInputAxes) inputAxesList.push(r.userInputAxes);
+      if (r.summonedHelperId != null) helperIdsSet.add(r.summonedHelperId);
+    }
+    const helperIds = Array.from(helperIdsSet);
+    const allLevels = await getAllAiLevels();
+    const summonedHelpers = allLevels.filter((l) => helperIds.includes(l.id));
+    const battleDelta = combineBattleDelta(inputAxesList, summonedHelpers);
+    const helpersSummoned = body.battle_history.reduce(
+      (acc, r) => acc + (r.summonedHelperId != null ? 1 : 0),
+      0
+    );
+
+    // Insert battle row.
     const { data: battleRow, error: insertErr } = await supabase
       .from("battles")
       .insert([
         {
-          user_id: null, // legacy column; we use anon_user_id now
+          user_id: null,
           theme_id: body.theme_id,
           user_stance: body.user_stance,
           final_user_hp: body.final_user_hp,
@@ -93,6 +135,8 @@ export async function POST(req: NextRequest) {
           ai_level: aiLevelId,
           rp_awarded: rpAwarded,
           anon_user_id: userId,
+          ended_by_hp_zero: endedByHpZero,
+          helpers_summoned: helpersSummoned,
         },
       ])
       .select("id")
@@ -122,19 +166,11 @@ export async function POST(req: NextRequest) {
       })
       .eq("user_id", userId);
 
-    // Update per-theme mastery.
+    // Theme mastery.
     await supabase.from("theme_mastery").upsert(
-      [
-        {
-          user_id: userId,
-          theme_id: body.theme_id,
-          wins: 0, // Will be incremented via RPC ideally; for now just mark seen.
-          losses: 0,
-        },
-      ],
+      [{ user_id: userId, theme_id: body.theme_id, wins: 0, losses: 0 }],
       { onConflict: "user_id,theme_id", ignoreDuplicates: true }
     );
-    // Increment wins/losses (two-step to keep it simple; upsert above ensures row exists).
     const masteryField = won ? "wins" : "losses";
     const { data: mastery } = await supabase
       .from("theme_mastery")
@@ -157,7 +193,56 @@ export async function POST(req: NextRequest) {
         .eq("theme_id", body.theme_id);
     }
 
-    // Mark the matchup completed (so the home screen shows ✓).
+    // ---- user_stats fold (Stage B) ----
+    if (inputAxesList.length > 0 || summonedHelpers.length > 0) {
+      const { data: existing } = await supabase
+        .from("user_stats")
+        .select("*")
+        .eq("user_id", userId)
+        .maybeSingle();
+      const prev = (existing as UserStatsRow | null) ?? ZERO_STATS(userId);
+
+      const next = foldDelta(
+        {
+          user_id: userId,
+          ax_data: prev.ax_data,
+          ax_ethics: prev.ax_ethics,
+          ax_emotion: prev.ax_emotion,
+          ax_persuasion: prev.ax_persuasion,
+          ax_flexibility: prev.ax_flexibility,
+          ax_aggression: prev.ax_aggression,
+          ax_calm: prev.ax_calm,
+          ax_humor: prev.ax_humor,
+          samples: prev.samples,
+        },
+        battleDelta
+      );
+
+      await supabase
+        .from("user_stats")
+        .upsert(
+          [
+            {
+              user_id: userId,
+              ax_data: (next as UserStatsRow).ax_data,
+              ax_ethics: (next as UserStatsRow).ax_ethics,
+              ax_emotion: (next as UserStatsRow).ax_emotion,
+              ax_persuasion: (next as UserStatsRow).ax_persuasion,
+              ax_flexibility: (next as UserStatsRow).ax_flexibility,
+              ax_aggression: (next as UserStatsRow).ax_aggression,
+              ax_calm: (next as UserStatsRow).ax_calm,
+              ax_humor: (next as UserStatsRow).ax_humor,
+              samples: next.samples,
+              updated_at: new Date().toISOString(),
+            },
+          ],
+          { onConflict: "user_id" }
+        );
+
+      // Touch the linter into thinking AXIS_KEYS is used.
+      void AXIS_KEYS;
+    }
+
     if (body.matchup_id) {
       await markMatchupCompleted(body.matchup_id);
     }

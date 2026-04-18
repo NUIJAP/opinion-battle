@@ -49,7 +49,7 @@ export default function MatchupCard({ matchup }: MatchupCardProps) {
       <h3 className="text-base font-bold leading-snug mb-2 text-slate-100">
         {theme.title}
       </h3>
-      <p className="text-xs text-slate-400 mb-3 leading-relaxed line-clamp-2">
+      <p className="text-xs text-slate-300 mb-3 leading-relaxed">
         {theme.description}
       </p>
 
@@ -67,7 +67,7 @@ export default function MatchupCard({ matchup }: MatchupCardProps) {
             className="bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-400 hover:to-blue-500 text-white py-3 rounded-xl text-center font-semibold shadow-lg transition-all active:scale-[0.98]"
           >
             <div className="text-sm">{theme.stance_a_name}</div>
-            <div className="text-[10px] font-normal opacity-80 mt-0.5 line-clamp-1">
+            <div className="text-[11px] font-normal opacity-95 mt-1 leading-snug">
               {theme.stance_a_summary}
             </div>
           </Link>
@@ -76,7 +76,7 @@ export default function MatchupCard({ matchup }: MatchupCardProps) {
             className="bg-gradient-to-r from-red-500 to-red-600 hover:from-red-400 hover:to-red-500 text-white py-3 rounded-xl text-center font-semibold shadow-lg transition-all active:scale-[0.98]"
           >
             <div className="text-sm">{theme.stance_b_name}</div>
-            <div className="text-[10px] font-normal opacity-80 mt-0.5 line-clamp-1">
+            <div className="text-[11px] font-normal opacity-95 mt-1 leading-snug">
               {theme.stance_b_summary}
             </div>
           </Link>

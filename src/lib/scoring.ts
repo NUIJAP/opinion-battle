@@ -1,39 +1,17 @@
-import type { UserAction } from "@/types";
-
-// ---- Game constants (from PROJECT_SPEC.md §2.1) ----
+// ---- Game constants ----
 
 export const INITIAL_HP = 100;
+/** Hard cap on rounds. HP=0 ends the battle earlier. */
 export const MAX_ROUNDS = 7;
+/** HP cost the user pays to summon a helper character (Stage B). */
+export const HELPER_SUMMON_HP_COST = 10;
 
-export interface HpDelta {
-  user: number;
-  ai: number;
-}
-
-export function hpDeltaForAction(action: UserAction): HpDelta {
-  switch (action) {
-    case "like":
-      return { user: +15, ai: -5 };
-    case "reference":
-      return { user: +8, ai: -3 };
-    case "oppose":
-      return { user: +20, ai: -20 };
-  }
-}
-
-/**
- * Extra damage when the user commits to a counter-argument.
- * This is added on top of the base "oppose" delta. A committed attack
- * is riskier and more rewarding than just pressing 🔥 and walking away.
- */
-export const COUNTER_BONUS_DELTA: HpDelta = { user: +10, ai: -15 };
-
-// HP is clamped to [0, 200] — user HP can climb above 100, AI HP cannot go below 0.
+/** HP is clamped to [0, 200]. AI cannot go below 0; user cannot exceed 200. */
 export function clampHp(value: number): number {
   return Math.max(0, Math.min(200, value));
 }
 
-// ---- Score (from PROJECT_SPEC.md §2.1) ----
+// ---- Score (legacy formula kept for the result screen display) ----
 
 export interface ScoreInput {
   finalUserHP: number;
@@ -55,11 +33,17 @@ export function calculateScore({
   return Math.round((baseScore + playerBonus + roundBonus) * multiplier);
 }
 
+/**
+ * Stage B win condition: AI HP=0 → user wins. User HP=0 → user loses.
+ * Otherwise compare HP. A draw needs them within 2 points of each other.
+ */
 export function judgeResult(
   userHp: number,
   aiHp: number
 ): "win" | "loss" | "draw" {
-  if (userHp > aiHp) return "win";
-  if (userHp < aiHp) return "loss";
-  return "draw";
+  if (aiHp <= 0 && userHp > 0) return "win";
+  if (userHp <= 0 && aiHp > 0) return "loss";
+  if (userHp <= 0 && aiHp <= 0) return "draw";
+  if (Math.abs(userHp - aiHp) <= 2) return "draw";
+  return userHp > aiHp ? "win" : "loss";
 }

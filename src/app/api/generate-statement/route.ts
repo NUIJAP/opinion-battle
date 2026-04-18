@@ -18,7 +18,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  // Minimal validation
   if (!body.themeId || !body.userStanceSide || !body.roundNumber) {
     return NextResponse.json(
       { error: "Missing required fields: themeId, userStanceSide, roundNumber" },
@@ -43,6 +42,9 @@ export async function POST(req: NextRequest) {
       statement: result.statement,
       tone: result.tone,
       keyPoint: result.keyPoint,
+      userInputAxes: result.userInputAxes,
+      hpDamageToUser: result.hpDamageToUser,
+      hpDamageToAi: result.hpDamageToAi,
     };
     return NextResponse.json(response);
   } catch (err) {

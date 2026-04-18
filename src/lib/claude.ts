@@ -1,14 +1,12 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type {
   AiLevel,
+  Axes8,
   BattleHistoryEntry,
-  CounterChoice,
-  GenerateCountersRequest,
   GenerateStatementRequest,
   Theme,
-  UserAction,
 } from "@/types";
-import { getAiLevelById } from "@/lib/ai-levels";
+import { getAiLevelById, tierForId } from "@/lib/ai-levels";
 
 const MODEL = "claude-sonnet-4-5";
 
@@ -33,59 +31,36 @@ function formatHistory(
   if (history.length === 0) return "（まだやり取りはありません）";
   return history
     .map((r) => {
-      const counter = r.userCounter
-        ? `\n   ユーザーの反論: "${r.userCounter.statement}"`
+      const userPart = r.userInput
+        ? `\n   ユーザーの応答: 「${r.userInput}」`
         : "";
-      return `ラウンド${r.round}:\n   ${aiStanceName}派の主張: "${r.aiStatement}"\n   ユーザーの反応: ${r.userAction ?? "未選択"}${counter}`;
+      return `ラウンド${r.round}:\n   ${aiStanceName}派の主張: 「${r.aiStatement}」${userPart}`;
     })
     .join("\n");
 }
 
-function actionLabel(
-  action: UserAction | "none",
-  userCounter: CounterChoice | null | undefined
-): string {
-  switch (action) {
-    case "like":
-      return "ユーザーはあなたの主張に「いいね」と反応しました。共感された点をさらに深掘りしてください。";
-    case "reference":
-      return "ユーザーは「参考になる」と評価しました。論拠を補強して、より説得力を高めてください。";
-    case "oppose":
-      if (userCounter) {
-        return `ユーザーは次のように反論してきました: 「${userCounter.statement}」\nこの反論を真正面から受け止めて、それに対する反駁を構築してください。反論の論点を避けずに、新しい論拠・事例・データで応戦してください。`;
-      }
-      return "ユーザーは強く反発しました。より強気で説得力のある反論を提示してください。";
-    case "none":
-    default:
-      return "これはラウンド1の初手です。立場を明確にした強い主張を提示してください。";
-  }
-}
-
-/** Per-character desired length window. Pulled from CLAUDE.md / FALLBACK. */
+/** Per-character desired length window. */
 function lengthWindow(level: AiLevel): { min: number; max: number } {
-  // Fallbacks for un-seeded rows.
   switch (level.id) {
-    case 1: return { min: 80, max: 120 };  // 囁
-    case 2: return { min: 60, max: 100 };  // 惰
-    case 3: return { min: 120, max: 180 }; // 量
-    case 4: return { min: 100, max: 160 }; // 憤
-    case 5: return { min: 100, max: 160 }; // 嘲
-    case 6: return { min: 140, max: 180 }; // 詭
-    case 7: return { min: 160, max: 200 }; // 識
-    case 8: return { min: 120, max: 180 }; // 狂
-    case 9: return { min: 140, max: 180 }; // 真
-    case 10: return { min: 30, max: 60 };  // 黙
+    case 1: return { min: 80, max: 120 };
+    case 2: return { min: 60, max: 100 };
+    case 3: return { min: 120, max: 180 };
+    case 4: return { min: 100, max: 160 };
+    case 5: return { min: 100, max: 160 };
+    case 6: return { min: 140, max: 180 };
+    case 7: return { min: 160, max: 200 };
+    case 8: return { min: 120, max: 180 };
+    case 9: return { min: 140, max: 180 };
+    case 10: return { min: 30, max: 60 };
     default: return { min: 120, max: 180 };
   }
 }
 
-/** Stat block for the prompt. Returns a compact 4-axis line if stats exist. */
 function statBlock(level: AiLevel): string {
   if (!level.stat_iq) return "";
   return `IQ:${level.stat_iq}/5  悪辣:${level.stat_venom}/5  機知:${level.stat_wit}/5  深慮:${level.stat_depth}/5`;
 }
 
-/** Builds the persona section so the character voice is unmistakable. */
 function personaSection(level: AiLevel): string {
   const lines: string[] = [];
   lines.push(`${level.emoji} 名: ${level.name_jp}（獄吏 #${level.id} / Tier ${level.tier ?? "?"}）`);
@@ -99,15 +74,44 @@ function personaSection(level: AiLevel): string {
   return lines.join("\n");
 }
 
+function helperSection(helper: AiLevel): string {
+  return `【ユーザーの召喚した助太刀獄吏】
+${helper.emoji} ${helper.name_jp}: ${helper.tagline}
+得意: ${helper.specialty ?? ""}
+助言スタイル: ${helper.prompt_hint}
+→ ユーザーはこの獄吏の助言を踏まえて応答している、と仮定して評価してよい。`;
+}
+
+/** Tier-derived base damage the AI deals to the user with each statement. */
+function baseAiDamage(tier: number): number {
+  // Tier1 → 8, Tier2 → 12, Tier3 → 16, Tier4 → 20, Tier5 → 25
+  const table = [0, 8, 12, 16, 20, 25];
+  return table[Math.max(1, Math.min(5, tier))] ?? 10;
+}
+
+/** Tier-derived resistance: high-tier AI takes less damage from user input. */
+function aiResistanceMultiplier(tier: number): number {
+  const table = [0, 1.0, 1.0, 0.85, 0.75, 0.65];
+  return table[Math.max(1, Math.min(5, tier))] ?? 1.0;
+}
+
 // ============================================================================
-// Statement generation
+// Public types for the wrapped Claude call
 // ============================================================================
 
 export interface GenerateStatementResult {
   statement: string;
   tone?: string;
   keyPoint?: string;
+  userInputAxes: Axes8 | null;
+  userInputStrength: number; // 0-100
+  hpDamageToUser: number;
+  hpDamageToAi: number;
 }
+
+// ============================================================================
+// generateAIStatement — Stage B
+// ============================================================================
 
 export async function generateAIStatement(
   theme: Theme,
@@ -122,16 +126,34 @@ export async function generateAIStatement(
       ? theme.stance_b_summary
       : theme.stance_a_summary;
 
-  // Default to id 5 (嘲, Tier 3) if omitted, matching ai-levels fallback default.
   const aiLevel = await getAiLevelById(request.aiLevelId ?? 5);
+  const aiTier = aiLevel.tier ?? tierForId(aiLevel.id);
   const { min, max } = lengthWindow(aiLevel);
 
-  const prompt = `あなたは「論獄」の獄吏として、以下のテーマで指定された立場を代表し、ユーザーに反論する。
+  const helper =
+    request.summonedHelperId != null
+      ? await getAiLevelById(request.summonedHelperId)
+      : null;
+
+  const userInput = (request.userInput ?? "").trim();
+  const isOpening = request.roundNumber === 1 || userInput.length === 0;
+
+  const userTurnSection = isOpening
+    ? "（これはラウンド1の初手、もしくはユーザーが入力をスキップした。あなたから先に主張を提示せよ。）"
+    : `【ユーザー(${userStanceName}派)の今ラウンドの応答】
+「${userInput}」
+${helper ? helperSection(helper) : ""}
+この応答を上記キャラ性格で受け止め、以下を全て満たす出力を返せ:
+- ユーザー応答を 8軸 (data, ethics, emotion, persuasion, flexibility, aggression, calm, humor) で 1-5 評価
+- ユーザー応答の総合的な強さを 0-100 で評価 (論理性・具体性・説得力)
+- その応答を真正面から受けて、あなたの立場(${aiStanceName}派)を擁護する反撃を放つ`;
+
+  const prompt = `あなたは「論獄」の獄吏。指定された立場を代表し、ユーザーと議論で殴り合う。
 
 【あなたの獄吏キャラクター】
 ${personaSection(aiLevel)}
 
-【このキャラクターとしての絶対的な振る舞い方】
+【絶対的な振る舞い方】
 ${aiLevel.prompt_hint}
 
 【テーマ】
@@ -148,131 +170,26 @@ ${aiStanceName}
 【ここまでのやり取り】
 ${formatHistory(request.battleHistory, aiStanceName)}
 
-【ユーザーの最新の反応（ラウンド${request.roundNumber}）】
-${actionLabel(request.userAction, request.userCounter)}
+${userTurnSection}
 
-【出力要件（厳守）】
-- 文字数は ${min}〜${max} 字（厳密に — このキャラはこの長さでしか喋らない）
-- 上記「キャラクターとしての絶対的な振る舞い方」を最優先で守る（語尾・口調・好む語彙を必ず反映）
+【出力要件】
+- statement は ${min}〜${max} 字、上記キャラ口調で
 - 同じ論理の繰り返しは避ける
-- ユーザーが反論してきた場合、その論点を避けずに正面から反駁する
-- 誹謗中傷や差別表現は避ける（議論で殴る、人格は殴らない）
+- 誹謗中傷・差別表現は避ける（議論で殴る、人格は殴らない）
 
 【出力形式】
-JSON のみ返してください。他の説明文・コードブロック記号は不要。
+JSON のみ。説明文・コードブロック記号不要。
 
 {
   "statement": "あなたの主張（${min}-${max}字、キャラの口調で）",
-  "tone": "強気" または "説得的" または "冷静" または "嘲笑" または "断定",
-  "keyPoint": "この主張の最重要ポイント（20字以内）"
+  "tone": "強気 / 説得的 / 冷静 / 嘲笑 / 断定 のいずれか",
+  "keyPoint": "この主張の最重要ポイント（20字以内）",
+  "user_input_axes": ${isOpening ? "null" : `{ "data":1-5, "ethics":1-5, "emotion":1-5, "persuasion":1-5, "flexibility":1-5, "aggression":1-5, "calm":1-5, "humor":1-5 }`},
+  "user_input_strength": ${isOpening ? "0" : "0-100 の整数 (ユーザー応答の総合的な強さ)"}
 }`;
 
-  try {
-    const client = getClient();
-    const message = await client.messages.create({
-      model: MODEL,
-      max_tokens: 700,
-      messages: [{ role: "user", content: prompt }],
-    });
-
-    const textBlock = message.content.find((b) => b.type === "text");
-    const rawText = textBlock && textBlock.type === "text" ? textBlock.text : "";
-    if (!rawText) throw new Error("Empty response from Claude");
-
-    const parsed = extractJson(rawText) as {
-      statement?: string;
-      tone?: string;
-      keyPoint?: string;
-    };
-
-    // Looser floor for 黙 (designed for 30字+).
-    const minFloor = Math.min(40, min);
-    if (!parsed.statement || parsed.statement.length < minFloor) {
-      throw new Error("Statement too short or missing");
-    }
-
-    return {
-      statement: parsed.statement,
-      tone: parsed.tone,
-      keyPoint: parsed.keyPoint,
-    };
-  } catch (err) {
-    console.error("[generateAIStatement] fallback:", err);
-    return {
-      statement: aiStanceSummary,
-      tone: "冷静",
-      keyPoint: "基本主張",
-    };
-  }
-}
-
-// ============================================================================
-// Counter-argument generation
-// ============================================================================
-
-/**
- * Generates 3 concrete counter-argument options the user can pick from
- * after pressing 🔥 (oppose). Tone of the suggestions is tuned to the
- * AI character the user is currently fighting.
- */
-export async function generateCounterChoices(
-  theme: Theme,
-  request: GenerateCountersRequest
-): Promise<CounterChoice[]> {
-  const userStanceName =
-    request.userStanceSide === "a" ? theme.stance_a_name : theme.stance_b_name;
-  const aiStanceName =
-    request.userStanceSide === "a" ? theme.stance_b_name : theme.stance_a_name;
-
-  const aiLevel = await getAiLevelById(request.aiLevelId ?? 5);
-
-  const personaContext = `【相手の獄吏】
-${aiLevel.emoji} ${aiLevel.name_jp}
-${aiLevel.tagline}
-弱点: ${aiLevel.weakness ?? "(不明)"}
-
-→ この獄吏の弱点を突く反論カードを優先的に提示してよい。`;
-
-  const prompt = `あなたは議論コーチ。ユーザーが「${aiStanceName}派」の獄吏に反論しようとしている。
-
-${personaContext}
-
-【テーマ】
-${theme.title}
-
-【ユーザーの立場】
-${userStanceName}
-
-【獄吏(${aiStanceName}派)が今言った主張】
-"${request.aiStatement}"
-
-【ここまでのやり取り】
-${formatHistory(request.battleHistory, aiStanceName)}
-
-【あなたの仕事】
-このAIの主張に対して、ユーザーが選べる反論カードを3つ作る。3つは「攻撃角度」が異なる必要がある:
-
-1. データ/事実で反駁: 具体的な統計・研究・事例でAIの前提を崩す
-2. 論理で反駁: AIの論理的欠陥・矛盾・飛躍を指摘する
-3. 倫理・価値観で反駁: AIが見落としている人間的・倫理的な側面を突く
-
-【要件】
-- 各 statement は 60〜100字（厳密に）。鋭く、具体的に。
-- 各 label は 8〜15字で、そのカードの要点を端的に表す
-- 上記「相手の獄吏の弱点」を活かす反論を1つは含める
-- AIの主張の弱点を実際に突いていること（的外れな反論はダメ）
-- ユーザーの立場（${userStanceName}）を擁護する方向であること
-
-【出力形式】
-JSON のみ返してください。
-
-{
-  "choices": [
-    { "id": "c1", "angle": "データで反駁", "label": "短いラベル", "statement": "60-100字の反論" },
-    { "id": "c2", "angle": "論理で反駁", "label": "短いラベル", "statement": "60-100字の反論" },
-    { "id": "c3", "angle": "倫理で反駁", "label": "短いラベル", "statement": "60-100字の反論" }
-  ]
-}`;
+  // Defaults for fallback path.
+  const baseDmg = baseAiDamage(aiTier);
 
   try {
     const client = getClient();
@@ -284,43 +201,57 @@ JSON のみ返してください。
 
     const textBlock = message.content.find((b) => b.type === "text");
     const rawText = textBlock && textBlock.type === "text" ? textBlock.text : "";
-    if (!rawText) throw new Error("Empty response");
+    if (!rawText) throw new Error("Empty response from Claude");
 
-    const parsed = extractJson(rawText) as { choices?: CounterChoice[] };
-    if (!parsed.choices || parsed.choices.length < 3) {
-      throw new Error("Not enough choices");
+    const parsed = extractJson(rawText) as {
+      statement?: string;
+      tone?: string;
+      keyPoint?: string;
+      user_input_axes?: Axes8 | null;
+      user_input_strength?: number;
+    };
+
+    const minFloor = Math.min(40, min);
+    if (!parsed.statement || parsed.statement.length < minFloor) {
+      throw new Error("Statement too short or missing");
     }
 
-    return parsed.choices.slice(0, 3).map((c, i) => ({
-      id: c.id || `c${i + 1}`,
-      label: (c.label ?? "").trim() || `反論${i + 1}`,
-      statement: (c.statement ?? "").trim(),
-      angle: (c.angle ?? "").trim() || "反駁",
-    }));
+    const userInputAxes = isOpening ? null : (parsed.user_input_axes ?? null);
+    const userStrength = isOpening
+      ? 0
+      : Math.max(0, Math.min(100, parsed.user_input_strength ?? 30));
+
+    // Damage calc.
+    // Mitigation: strong user input absorbs damage from AI's rebuttal.
+    const mitigation = Math.round(userStrength * 0.10);
+    const hpDamageToUser = isOpening
+      ? baseDmg
+      : Math.max(2, baseDmg - mitigation);
+
+    // User attacks AI: scaled by userStrength × resistance.
+    const hpDamageToAi = isOpening
+      ? 0
+      : Math.round((userStrength / 4) * aiResistanceMultiplier(aiTier));
+
+    return {
+      statement: parsed.statement,
+      tone: parsed.tone,
+      keyPoint: parsed.keyPoint,
+      userInputAxes,
+      userInputStrength: userStrength,
+      hpDamageToUser,
+      hpDamageToAi,
+    };
   } catch (err) {
-    console.error("[generateCounterChoices] fallback:", err);
-    return [
-      {
-        id: "c1",
-        angle: "データで反駁",
-        label: "データを出せ",
-        statement:
-          "主張の根拠となる具体的なデータや研究結果を示してほしい。印象論ではなく実証的な裏付けが必要だ。",
-      },
-      {
-        id: "c2",
-        angle: "論理で反駁",
-        label: "論点のすり替え",
-        statement:
-          "その論理は本題とずれている。前提と結論の間に飛躍があり、異なる論点を混同している。",
-      },
-      {
-        id: "c3",
-        angle: "倫理で反駁",
-        label: "人間が抜けている",
-        statement:
-          "その議論には実際に影響を受ける人々の視点が欠けている。効率や理論だけでは語れない問題だ。",
-      },
-    ];
+    console.error("[generateAIStatement] fallback:", err);
+    return {
+      statement: aiStanceSummary,
+      tone: "冷静",
+      keyPoint: "基本主張",
+      userInputAxes: null,
+      userInputStrength: 0,
+      hpDamageToUser: baseDmg,
+      hpDamageToAi: 0,
+    };
   }
 }

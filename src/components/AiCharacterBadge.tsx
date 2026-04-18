@@ -58,7 +58,7 @@ export default function AiCharacterBadge({
               </span>
             )}
           </div>
-          <p className="text-[11px] text-slate-400 leading-snug line-clamp-2">
+          <p className="text-[11px] text-slate-300 leading-snug">
             {ai.tagline}
           </p>
         </div>

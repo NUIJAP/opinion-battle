@@ -1,30 +1,20 @@
 import { create } from "zustand";
 import type {
+  AiLevel,
+  Axes8,
   BattleRound,
-  CounterChoice,
   StanceSide,
   Theme,
-  UserAction,
 } from "@/types";
-import {
-  COUNTER_BONUS_DELTA,
-  INITIAL_HP,
-  clampHp,
-  hpDeltaForAction,
-} from "@/lib/scoring";
+import { HELPER_SUMMON_HP_COST, INITIAL_HP, clampHp } from "@/lib/scoring";
 
 /**
- * Game states:
- *   "voting"           → user picks 👍 / 💡 / 🔥
- *   "choosing-counter" → user pressed 🔥, picking one of 3 counter cards
- *   "generating-ai"    → AI is crafting the next statement
- *   "finished"         → battle over, waiting for navigation to /result
+ * Stage B phases:
+ *   "generating-ai" → API in flight (opening or rebuttal)
+ *   "input"         → user is typing their reply
+ *   "finished"      → HP=0 or MAX_ROUNDS reached, navigating to /result
  */
-export type Phase =
-  | "voting"
-  | "choosing-counter"
-  | "generating-ai"
-  | "finished";
+export type Phase = "generating-ai" | "input" | "finished";
 
 interface GameState {
   // Config
@@ -35,151 +25,131 @@ interface GameState {
   // Live state
   userHp: number;
   aiHp: number;
+  /** 1..MAX_ROUNDS — the AI statement currently visible to the user. */
   round: number;
   currentAiStatement: string;
   phase: Phase;
 
-  // Counter flow
-  pendingCounters: CounterChoice[] | null;
+  // Helper bookkeeping (per battle).
+  summonedHelperIds: number[];
+  helpersSummonedThisRound: number | null;
 
-  // History
+  // History (one entry per completed round).
   history: BattleRound[];
 
   // ---- Actions ----
   startBattle: (theme: Theme, side: StanceSide) => void;
   setPhase: (phase: Phase) => void;
-  setAiStatement: (statement: string) => void;
-
-  /** Applies HP change for a simple (non-counter) vote and records a round. */
-  applySimpleAction: (action: UserAction) => void;
-
-  /** Applies HP change for an "oppose + counter" pair and records a round. */
-  applyCounterAction: (counter: CounterChoice) => void;
-
-  setPendingCounters: (choices: CounterChoice[] | null) => void;
-
-  /** Advances to the next round with the fresh AI statement. */
-  commitRound: (nextStatement: string) => void;
-
+  setOpeningStatement: (statement: string, hpDamageToUser: number) => void;
+  /** Pay -10 HP to summon a helper for this round. Returns true if affordable. */
+  summonHelper: (helperId: number) => boolean;
+  /** Apply the result of one round's API call. Returns true if battle ends. */
+  applyRoundResponse: (
+    aiStanceName: string,
+    payload: {
+      userInput: string;
+      userInputAxes: Axes8 | null;
+      summonedHelperId: number | null;
+      hpDamageToUser: number;
+      hpDamageToAi: number;
+      nextAiStatement: string;
+    }
+  ) => { battleOver: boolean };
   finishBattle: () => void;
   reset: () => void;
 }
 
-export const useGameStore = create<GameState>((set) => ({
-  theme: null,
-  userStanceSide: null,
-  startedAt: null,
+const initialLive = {
   userHp: INITIAL_HP,
   aiHp: INITIAL_HP,
   round: 1,
   currentAiStatement: "",
-  phase: "generating-ai", // round-1 kickoff uses this
-  pendingCounters: null,
-  history: [],
+  phase: "generating-ai" as Phase,
+  summonedHelperIds: [] as number[],
+  helpersSummonedThisRound: null as number | null,
+  history: [] as BattleRound[],
+};
+
+export const useGameStore = create<GameState>((set, get) => ({
+  theme: null,
+  userStanceSide: null,
+  startedAt: null,
+  ...initialLive,
 
   startBattle: (theme, side) =>
     set({
       theme,
       userStanceSide: side,
       startedAt: Date.now(),
-      userHp: INITIAL_HP,
-      aiHp: INITIAL_HP,
-      round: 1,
-      currentAiStatement: "",
-      phase: "generating-ai",
-      pendingCounters: null,
-      history: [],
+      ...initialLive,
     }),
 
   setPhase: (phase) => set({ phase }),
 
-  setAiStatement: (statement) => set({ currentAiStatement: statement }),
-
-  applySimpleAction: (action) =>
-    set((state) => {
-      if (!state.theme || !state.userStanceSide) return state;
-      const delta = hpDeltaForAction(action);
-      const newUserHp = clampHp(state.userHp + delta.user);
-      const newAiHp = clampHp(state.aiHp + delta.ai);
-
-      const aiStanceName =
-        state.userStanceSide === "a"
-          ? state.theme.stance_b_name
-          : state.theme.stance_a_name;
-
-      const roundEntry: BattleRound = {
-        round: state.round,
-        aiStance: aiStanceName,
-        aiStatement: state.currentAiStatement,
-        userAction: action,
-        userCounter: null,
-        userHpAfter: newUserHp,
-        aiHpAfter: newAiHp,
-      };
-
-      return {
-        userHp: newUserHp,
-        aiHp: newAiHp,
-        history: [...state.history, roundEntry],
-      };
-    }),
-
-  applyCounterAction: (counter) =>
-    set((state) => {
-      if (!state.theme || !state.userStanceSide) return state;
-
-      // Oppose base + committed-counter bonus.
-      const base = hpDeltaForAction("oppose");
-      const newUserHp = clampHp(
-        state.userHp + base.user + COUNTER_BONUS_DELTA.user
-      );
-      const newAiHp = clampHp(state.aiHp + base.ai + COUNTER_BONUS_DELTA.ai);
-
-      const aiStanceName =
-        state.userStanceSide === "a"
-          ? state.theme.stance_b_name
-          : state.theme.stance_a_name;
-
-      const roundEntry: BattleRound = {
-        round: state.round,
-        aiStance: aiStanceName,
-        aiStatement: state.currentAiStatement,
-        userAction: "oppose",
-        userCounter: counter,
-        userHpAfter: newUserHp,
-        aiHpAfter: newAiHp,
-      };
-
-      return {
-        userHp: newUserHp,
-        aiHp: newAiHp,
-        history: [...state.history, roundEntry],
-        pendingCounters: null,
-      };
-    }),
-
-  setPendingCounters: (choices) => set({ pendingCounters: choices }),
-
-  commitRound: (nextStatement) =>
+  setOpeningStatement: (statement, hpDamageToUser) =>
     set((state) => ({
-      round: state.round + 1,
-      currentAiStatement: nextStatement,
-      phase: "voting",
+      currentAiStatement: statement,
+      userHp: clampHp(state.userHp - hpDamageToUser),
+      phase: "input",
     })),
+
+  summonHelper: (helperId) => {
+    const s = get();
+    if (s.userHp <= HELPER_SUMMON_HP_COST) return false;
+    if (s.helpersSummonedThisRound != null) return false; // one helper per round
+    set({
+      userHp: clampHp(s.userHp - HELPER_SUMMON_HP_COST),
+      helpersSummonedThisRound: helperId,
+      summonedHelperIds: [...s.summonedHelperIds, helperId],
+    });
+    return true;
+  },
+
+  applyRoundResponse: (aiStanceName, payload) => {
+    const s = get();
+    const newUserHp = clampHp(s.userHp - payload.hpDamageToUser);
+    const newAiHp = clampHp(s.aiHp - payload.hpDamageToAi);
+
+    const entry: BattleRound = {
+      round: s.round,
+      aiStance: aiStanceName,
+      aiStatement: s.currentAiStatement,
+      userInput: payload.userInput,
+      userInputAxes: payload.userInputAxes,
+      summonedHelperId: payload.summonedHelperId,
+      hpDamageToUser: payload.hpDamageToUser,
+      hpDamageToAi: payload.hpDamageToAi,
+      userHpAfter: newUserHp,
+      aiHpAfter: newAiHp,
+    };
+
+    const isHpZero = newUserHp <= 0 || newAiHp <= 0;
+    set({
+      userHp: newUserHp,
+      aiHp: newAiHp,
+      history: [...s.history, entry],
+      currentAiStatement: payload.nextAiStatement,
+      round: s.round + 1,
+      helpersSummonedThisRound: null,
+      phase: isHpZero ? "finished" : "input",
+    });
+
+    return { battleOver: isHpZero };
+  },
 
   finishBattle: () => set({ phase: "finished" }),
 
-  reset: () =>
-    set({
-      theme: null,
-      userStanceSide: null,
-      startedAt: null,
-      userHp: INITIAL_HP,
-      aiHp: INITIAL_HP,
-      round: 1,
-      currentAiStatement: "",
-      phase: "generating-ai",
-      pendingCounters: null,
-      history: [],
-    }),
+  reset: () => set({ theme: null, userStanceSide: null, startedAt: null, ...initialLive }),
 }));
+
+/** Convenience selector: AI level of the helper picked this round (number or null). */
+export function selectHelperThisRound(state: GameState): number | null {
+  return state.helpersSummonedThisRound;
+}
+
+/** Convenience: derive the AiLevel objects of all summoned helpers from a list. */
+export function expandHelperIds(ids: number[], all: AiLevel[]): AiLevel[] {
+  return ids
+    .map((id) => all.find((a) => a.id === id))
+    .filter((x): x is AiLevel => x !== undefined);
+}

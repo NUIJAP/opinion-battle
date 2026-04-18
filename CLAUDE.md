@@ -22,7 +22,7 @@
 
 ## 現在のフェーズ
 
-**Phase 2A Stage A (バックエンド+UI 完了 / Supabase 適用待ち)**
+**Phase 2A Stage B (バックエンド+UI 完了 / Supabase 適用待ち)**
 
 ### 完了済み
 - [x] Phase 1 (MVP): 固定3テーマで AI vs ユーザー議論、Supabase保存まで
@@ -56,14 +56,31 @@
   - `src/app/result/[battleId]/page.tsx` 上部に `<RpBonus>` を追加 (sessionStorage から RP 獲得値を読み、カウントアップ + RANK UP! バッジ)
 - [x] 型チェック (`npx tsc --noEmit`) + 本番ビルド (`npm run build`) 通過
 
+- [x] Phase 2A Stage B — 戦闘モデル全面刷新:
+  - DB マイグレーション (`supabase/migrations/phase2a-stage-b.sql`) — **未適用なら手動適用が必要**
+    - `themes.topic_axes jsonb` 追加 + 既存3テーマに 8軸重要度 seed
+    - `ai_levels` に8軸列追加 (ax_data/ethics/emotion/persuasion/flexibility/aggression/calm/humor) + 10獄吏に再 seed
+    - `user_stats` 新規テーブル (anon_user × 8軸 + samples)
+    - `battles` に `ended_by_hp_zero` / `helpers_summoned` 列追加
+  - 戦闘モデル: 「いいね/参考/反論」3択ボタン + 反論カード を全廃 → ユーザーがテキスト直接入力
+  - お助け獄吏システム: 戦闘中の獄吏を除く9体から3体ランダム + テーマ8軸とのコサイン類似度マッチ%表示。召喚で -10HP、ラウンドあたり1体まで
+  - HP=0 で即終了 + 全画面演出 (`HpZeroOverlay.tsx`)。AI発言で常時ユーザーHP削れ、ユーザー応答強度で AI HP 削れ + AIダメージ軽減
+  - Claude 1呼び出しで「ユーザー応答8軸評価 + AI反撃文 + ダメージ算出」を返す形式に書き直し
+  - ユーザー性格8軸 (`user_stats`) を各バトル終了時に染まり更新 (お助け獄吏は半重み)
+  - 結果画面に 8軸レーダー (`PersonalityRadar.tsx` SVG) + 性格タイプ (ルールベース、Claude呼ばず) + 相性キャラ表示。samples<5 なら「判定中…」
+  - `/api/helper-pick` 新規 / `/api/user-stats` 新規 / `/api/generate-counters` 廃止
+  - `CounterChoices.tsx` / `VoteButtons.tsx` / `ThemeCard.tsx` 削除
+- [x] 型チェック (`npx tsc --noEmit`) + 本番ビルド (`npm run build`) 通過
+
 ### 未完・これからやる
-- [ ] Supabase ダッシュボードで `supabase/migrations/phase2a-week1.sql` → `supabase/migrations/phase2a-stage-a.sql` を順に手動適用
-- [ ] `npm run dev` で実機動作確認:
-  - ホームに3マッチアップが描画される (anon user 自動生成)
-  - 各マッチアップから `?matchupId=...&aiLevel=...` でゲーム画面へ
-  - 7ラウンド完走 → 結果画面で RP獲得演出
-  - Supabase: `anon_users` / `user_ranks` / `daily_matchups` / `battles` (ai_level/rp_awarded列) が更新されているか
-- [ ] 旧 `src/components/ThemeCard.tsx` は現在未使用。レガシー削除するか保留するか判断
+- [ ] Supabase ダッシュボードで未適用のマイグレーションを順に手動適用 (`phase2a-week1.sql` → `phase2a-stage-a.sql` → `phase2a-stage-b.sql`)
+- [ ] `npm run dev` で Stage B 実機動作確認:
+  - ホームのマッチアップ表示が壊れていないか
+  - ゲーム画面: テキスト入力 + お助け獄吏3枠が描画される / マッチ%が出る / 召喚で-10HP
+  - HP=0 で即「K.O.」or「敗北」演出 → 結果画面遷移
+  - 結果画面: 5戦未満なら「判定中…」、5戦以上で 8軸レーダー + タイプ + 相性キャラ
+  - Supabase: `user_stats` が増えていく / `battles.ended_by_hp_zero` / `helpers_summoned` 列が入る
+- [ ] (将来 Stage C) スタミナモデル: 1日3スタミナ、広告で回復。お助け召喚をスタミナ消費に切替予定。Claude.ts/scoring.ts に `// TODO: stamina model` メモ済
 
 ---
 
@@ -227,31 +244,41 @@ opinion-battle/
 │   │   └── globals.css
 │   ├── components/
 │   │   ├── AiStatementBubble.tsx
-│   │   ├── CounterChoices.tsx
 │   │   ├── HpBar.tsx
-│   │   ├── ThemeCard.tsx            # Phase 1 レガシー (現在未使用)
-│   │   ├── VoteButtons.tsx
 │   │   ├── MatchupCard.tsx          # Stage A
 │   │   ├── AiCharacterBadge.tsx     # Stage A (compact / card variant)
 │   │   ├── RankDisplay.tsx          # Stage A
-│   │   └── RpBonus.tsx              # Stage A (RP獲得演出, client only)
+│   │   ├── RpBonus.tsx              # Stage A (RP獲得演出, client only)
+│   │   ├── TextInputArea.tsx        # Stage B (反論テキスト入力)
+│   │   ├── HelperPanel.tsx          # Stage B (3お助け獄吏 + マッチ%)
+│   │   ├── HpZeroOverlay.tsx        # Stage B (HP=0 演出, full-screen)
+│   │   ├── PersonalityRadar.tsx    # Stage B (8軸レーダー SVG)
+│   │   └── PersonalitySection.tsx   # Stage B (判定中 / 性格診断 / 相性キャラ)
 │   ├── lib/
-│   │   ├── ai-levels.ts             # Stage A: 10体 + tierForId
-│   │   ├── claude.ts                # Stage A: prompt キャラ特化
+│   │   ├── ai-levels.ts             # Stage A: 10体 / Stage B: 8軸対応
+│   │   ├── claude.ts                # Stage B: 1呼出で評価+反撃+ダメージ
+│   │   ├── affinity.ts              # Stage B: cosineSim / pickHelpers / personalityType / foldDelta
 │   │   ├── matchmaking.ts           # Stage A: tier 基準で10体から選ぶ
 │   │   ├── ranking.ts               # Stage A: getUserTier + tier基準reward
-│   │   ├── scoring.ts               # Phase 1.5
+│   │   ├── scoring.ts               # Stage B: HELPER_SUMMON_HP_COST 追加, judgeResult HP=0対応
 │   │   ├── supabase.ts              # Phase 1
 │   │   └── users.ts                 # Phase 2A Week 1
 │   ├── store/
-│   │   └── gameStore.ts             # Phase 1.5
+│   │   └── gameStore.ts             # Stage B: applyRoundResponse / summonHelper
+│   ├── app/api/
+│   │   ├── daily-matchup/           # Stage A
+│   │   ├── generate-statement/      # Stage B (1呼出, ユーザー入力評価込み)
+│   │   ├── helper-pick/             # Stage B (新規)
+│   │   ├── user-stats/              # Stage B (新規)
+│   │   └── save-battle/             # Stage B (HP終了 + user_stats 更新)
 │   └── types/
-│       └── index.ts                 # Stage A: AiLevel に4軸stat+ペルソナ
+│       └── index.ts                 # Stage B: Axes8 / UserStats / HelperPick / 新BattleRound
 └── supabase/
     ├── schema.sql                   # Phase 1
     ├── migrations/
-    │   ├── phase2a-week1.sql        # 未適用ならユーザーがSQL Editorで実行
-    │   └── phase2a-stage-a.sql      # 未適用ならユーザーがSQL Editorで実行
+    │   ├── phase2a-week1.sql        # 適用済 (ユーザー側で1回)
+    │   ├── phase2a-stage-a.sql      # 適用済 (ユーザー側で1回)
+    │   └── phase2a-stage-b.sql      # 未適用ならユーザーがSQL Editorで実行
     └── seeds/
         ├── seed-themes.sql
         └── seed-themes.ts
@@ -260,6 +287,15 @@ opinion-battle/
 **localStorage / sessionStorage キー**:
 - `rongoku.anonUserId` (localStorage) — anon user の UUID
 - `rongoku.lastBattleResult` (sessionStorage) — 直前バトルの SaveBattleResponse + aiLevel
+
+**Stage B 戦闘モデル要点**:
+- ユーザー入力 → Claude が 8軸評価 (1-5) + 強度 (0-100) + AI反撃文 + 両者HPダメージを1呼出で返す
+- AI ダメージ式: `baseAiDamage(tier) - userStrength*0.10` (Tier1=8 → Tier5=25)
+- ユーザー → AI ダメージ式: `userStrength/4 * resistance(tier)` (Tier5は0.65倍)
+- お助け獄吏 召喚 = -10HP, ラウンド1体まで, 戦闘中の獄吏除く9体から3体ランダム + 各マッチ% (cosine of theme.topic_axes vs ai 8軸)
+- HP=0 で即終了 (overlay 1.4秒) → 結果画面遷移
+- user_stats 更新: ユーザー入力評価8軸 (重み1) + 召喚した獄吏8軸 (重み0.5) を平均 → foldDelta で running average
+- 性格診断: samples<5 で「判定中…」、それ以降 8軸の最高値で SINGLE_TYPE 命名 (8タイプ) + 上位2軸/下位2軸表示 + 8軸最近傍の獄吏を「相性良いキャラ」表示
 
 ---
 
