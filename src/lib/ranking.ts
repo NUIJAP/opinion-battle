@@ -59,13 +59,14 @@ export function getRankFromRp(rp: number): RankTier {
   };
 }
 
-/** Map RP to the user's tier 1-5 (for matchmaking & RP rewards). */
+/** Map RP to the user's tier 1-6 (Stage C: D=1, C=2, B=3, A=4, S=5, SS=6). */
 export function getUserTier(rp: number): number {
-  if (rp >= 15000) return 5;
-  if (rp >= 5000) return 4;
-  if (rp >= 2000) return 3;
-  if (rp >= 500) return 2;
-  return 1;
+  if (rp >= 25000) return 6; // SS
+  if (rp >= 10000) return 5; // S
+  if (rp >= 4000)  return 4; // A
+  if (rp >= 1500)  return 3; // B
+  if (rp >= 500)   return 2; // C
+  return 1;                   // D
 }
 
 /** Back-compat alias. Prefer getUserTier in new code. */
@@ -94,11 +95,12 @@ export function calculateRpAward(input: RpAwardInput): number {
   if (!input.won) return 0;
 
   const baseByTier: Record<number, number> = {
-    1: 50,
-    2: 120,
-    3: 280,
-    4: 600,
-    5: 1200,
+    1: 30,    // D
+    2: 80,    // C
+    3: 180,   // B
+    4: 400,   // A
+    5: 800,   // S
+    6: 1500,  // SS
   };
   const base = baseByTier[input.aiTier] ?? 100;
 

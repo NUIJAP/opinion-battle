@@ -1,6 +1,6 @@
 import {
   AXIS_KEYS,
-  AXIS_LABEL_JP,
+  AXIS_POLES_JP,
   type AiLevel,
   type Axes8,
   type HelperPick,
@@ -12,39 +12,33 @@ import {
 // Vector helpers
 // ============================================================================
 
-/** Build the AiLevel's 8-axis stat vector. Falls back to mid-3 if missing. */
+/** Build the AiLevel's 8-axis stat vector. Falls back to neutral 3 if missing. */
 export function aiLevelVector(ai: AiLevel): Axes8 {
   return {
-    data: ai.ax_data ?? 3,
-    ethics: ai.ax_ethics ?? 3,
-    emotion: ai.ax_emotion ?? 3,
-    persuasion: ai.ax_persuasion ?? 3,
-    flexibility: ai.ax_flexibility ?? 3,
-    aggression: ai.ax_aggression ?? 3,
-    calm: ai.ax_calm ?? 3,
-    humor: ai.ax_humor ?? 3,
+    reason_madness:       ai.ax_reason_madness       ?? 3,
+    lust_restraint:       ai.ax_lust_restraint       ?? 3,
+    seduction_directness: ai.ax_seduction_directness ?? 3,
+    chaos_order:          ai.ax_chaos_order          ?? 3,
+    violence_cunning:     ai.ax_violence_cunning     ?? 3,
+    nihility_obsession:   ai.ax_nihility_obsession   ?? 3,
+    mockery_empathy:      ai.ax_mockery_empathy      ?? 3,
+    deception_honesty:    ai.ax_deception_honesty    ?? 3,
   };
 }
 
-/** Build the theme's 8-axis topic-importance vector. Falls back to neutral. */
+/** Build the theme's 8-axis topic-importance vector (each 0-1). */
 export function themeVector(theme: Theme): Axes8 {
   const t = theme.topic_axes;
   if (!t) {
-    return {
-      data: 0.5, ethics: 0.5, emotion: 0.5, persuasion: 0.5,
-      flexibility: 0.5, aggression: 0.5, calm: 0.5, humor: 0.5,
-    };
+    return AXIS_KEYS.reduce((acc, k) => {
+      acc[k] = 0.5;
+      return acc;
+    }, {} as Axes8);
   }
-  return {
-    data: t.data ?? 0.5,
-    ethics: t.ethics ?? 0.5,
-    emotion: t.emotion ?? 0.5,
-    persuasion: t.persuasion ?? 0.5,
-    flexibility: t.flexibility ?? 0.5,
-    aggression: t.aggression ?? 0.5,
-    calm: t.calm ?? 0.5,
-    humor: t.humor ?? 0.5,
-  };
+  return AXIS_KEYS.reduce((acc, k) => {
+    acc[k] = (t as Axes8)[k] ?? 0.5;
+    return acc;
+  }, {} as Axes8);
 }
 
 function dot(a: Axes8, b: Axes8): number {
@@ -73,10 +67,6 @@ export function matchPctForHelper(theme: Theme, helper: AiLevel): number {
 // Helper picks
 // ============================================================================
 
-/**
- * Picks N helpers from the candidate pool (must already exclude the opponent).
- * Returns each pick with a match% computed against the theme.
- */
 export function pickHelpers(
   pool: AiLevel[],
   theme: Theme,
@@ -98,7 +88,6 @@ export function pickHelpers(
 // User stats accumulation
 // ============================================================================
 
-/** Adds a single delta-vector to the user_stats running average. */
 export function foldDelta(prev: UserStats, delta: Axes8): UserStats {
   const n = prev.samples;
   const np1 = n + 1;
@@ -112,22 +101,17 @@ export function foldDelta(prev: UserStats, delta: Axes8): UserStats {
   return next;
 }
 
-/**
- * Combines an evaluation of the user's input axes with the helpers
- * they summoned this battle. Helpers contribute at half weight (the user's
- * own writing matters more than who they leaned on).
- */
 export function combineBattleDelta(
-  inputAxes: Axes8[], // one entry per round that had user input
+  inputAxesList: Axes8[],
   summonedHelpers: AiLevel[]
 ): Axes8 {
-  const sum: Axes8 = {
-    data: 0, ethics: 0, emotion: 0, persuasion: 0,
-    flexibility: 0, aggression: 0, calm: 0, humor: 0,
-  };
+  const sum: Axes8 = AXIS_KEYS.reduce((acc, k) => {
+    acc[k] = 0;
+    return acc;
+  }, {} as Axes8);
   let weight = 0;
 
-  for (const a of inputAxes) {
+  for (const a of inputAxesList) {
     for (const k of AXIS_KEYS) sum[k] += a[k];
     weight += 1;
   }
@@ -136,67 +120,107 @@ export function combineBattleDelta(
     for (const k of AXIS_KEYS) sum[k] += v[k] * 0.5;
     weight += 0.5;
   }
-  if (weight === 0) {
-    return sum;
-  }
+  if (weight === 0) return sum;
   for (const k of AXIS_KEYS) sum[k] = sum[k] / weight;
   return sum;
 }
 
 // ============================================================================
-// Personality typing (rule-based, no Claude call)
+// Personality typing (rule-based, bipolar 16-type)
 // ============================================================================
 
-/** Threshold below which user_stats are still in 「判定中」 mode. */
 export const PERSONALITY_JUDGING_UNTIL = 5;
 
-/** Read the user's 8-axis vector out of UserStats. */
 export function userStatsVector(s: UserStats): Axes8 {
   return {
-    data: s.ax_data, ethics: s.ax_ethics, emotion: s.ax_emotion,
-    persuasion: s.ax_persuasion, flexibility: s.ax_flexibility,
-    aggression: s.ax_aggression, calm: s.ax_calm, humor: s.ax_humor,
+    reason_madness:       s.ax_reason_madness,
+    lust_restraint:       s.ax_lust_restraint,
+    seduction_directness: s.ax_seduction_directness,
+    chaos_order:          s.ax_chaos_order,
+    violence_cunning:     s.ax_violence_cunning,
+    nihility_obsession:   s.ax_nihility_obsession,
+    mockery_empathy:      s.ax_mockery_empathy,
+    deception_honesty:    s.ax_deception_honesty,
   };
 }
 
-interface PersonalityType {
-  name: string;       // "論理エリート型"
-  description: string; // 一行コメント
+interface TypeName { name: string; comment: string }
+
+/** Per-axis pole → personality archetype. 16 total (8 axes × 2 poles). */
+const TYPE_BY_AXIS_POLE: Record<keyof Axes8, { high: TypeName; low: TypeName }> = {
+  reason_madness: {
+    high: { name: "氷の論理型", comment: "感情を切り捨て、計算で議論を制する冷徹な理性派。" },
+    low:  { name: "狂気の咆哮型", comment: "理屈を踏み越え、衝動と熱量で相手を圧倒する。" },
+  },
+  lust_restraint: {
+    high: { name: "渇望の獣型", comment: "欲しいものに躊躇なく手を伸ばす。情熱が最大の武器。" },
+    low:  { name: "鋼の戒律型", comment: "欲を律し、目的のために自らを縛れる修行者気質。" },
+  },
+  seduction_directness: {
+    high: { name: "甘言の誘惑者型", comment: "言葉で相手を絡め取る。鎌をかけ、布を被せて勝つ。" },
+    low:  { name: "鉄拳の直撃型", comment: "回りくどさを嫌い、最短距離で核心を打ち抜く直球派。" },
+  },
+  chaos_order: {
+    high: { name: "嵐の混沌型", comment: "規則を壊し、自由と即興で議論の地形を変える。" },
+    low:  { name: "鉄壁の秩序型", comment: "ルールと構造を尊び、揺るがぬ枠組みで攻める。" },
+  },
+  violence_cunning: {
+    high: { name: "蛮勇の戦士型", comment: "正面突破を恐れず、勢いで相手をねじ伏せる。" },
+    low:  { name: "策謀の知将型", comment: "頭で勝つ。罠と布石で気付かぬうちに勝負を決める。" },
+  },
+  nihility_obsession: {
+    high: { name: "虚無の達観型", comment: "「結局どうでもいい」という冷たい視座から議論を解体する。" },
+    low:  { name: "執念の追求者型", comment: "一つのことに食らいつき、誰よりも深く掘る。" },
+  },
+  mockery_empathy: {
+    high: { name: "嘲笑の傍観者型", comment: "皮肉と見下しで相手の足場を崩す観察者。" },
+    low:  { name: "共感の調停者型", comment: "相手の立場に立ち、理解を武器に対話を進める。" },
+  },
+  deception_honesty: {
+    high: { name: "欺瞞の語り手型", comment: "事実を操り、物語で相手を別の世界に連れ出す。" },
+    low:  { name: "直言の挑戦者型", comment: "嘘を許さず、痛い真理を真正面から突きつける。" },
+  },
+};
+
+export interface PersonalityType {
+  name: string;
+  description: string;
   topAxes: Array<keyof Axes8>;
   bottomAxes: Array<keyof Axes8>;
 }
 
-/** Single-axis tier name (used when one axis dominates). */
-const SINGLE_TYPE_BY_AXIS: Record<keyof Axes8, { name: string; comment: string }> = {
-  data:        { name: "データ・サムライ型",   comment: "数字と事実で押し切る統計フェチ。"  },
-  ethics:      { name: "正義の説教師型",         comment: "倫理を旗印に揺るがない論者。"      },
-  emotion:     { name: "情熱の語り部型",         comment: "心を動かすことで議論を制する。"    },
-  persuasion:  { name: "言葉の戦略家型",         comment: "巧妙な構成で相手の退路を塞ぐ。"    },
-  flexibility: { name: "風読み型",                 comment: "状況に応じて軸足を巧みに変える。"  },
-  aggression:  { name: "猛攻撃型",                 comment: "迷わず正面から殴る突撃論者。"      },
-  calm:        { name: "氷の論理型",               comment: "冷徹で揺るがず、表情も変えない。"  },
-  humor:       { name: "皮肉とユーモア型",         comment: "笑いと皮肉で議論を制する遊撃手。" },
-};
-
-/** Compute personality type from a user vector. Pure function. */
+/** Picks the most-extreme axis (max |v - 3|) and its pole. */
 export function personalityType(v: Axes8): PersonalityType {
-  const sorted = AXIS_KEYS.map((k) => ({ k, val: v[k] })).sort(
-    (a, b) => b.val - a.val
+  let bestKey: keyof Axes8 = AXIS_KEYS[0];
+  let bestDist = -1;
+  let bestHigh = false;
+  for (const k of AXIS_KEYS) {
+    const dist = Math.abs(v[k] - 3);
+    if (dist > bestDist) {
+      bestDist = dist;
+      bestKey = k;
+      bestHigh = v[k] >= 3;
+    }
+  }
+  const archetype = bestHigh
+    ? TYPE_BY_AXIS_POLE[bestKey].high
+    : TYPE_BY_AXIS_POLE[bestKey].low;
+
+  // Compute top-2 / bottom-2 axes with pole-aware labels.
+  const sortedHigh = AXIS_KEYS.map((k) => ({ k, v: v[k] })).sort(
+    (a, b) => b.v - a.v
   );
-  const top = sorted[0];
-  const baseType = SINGLE_TYPE_BY_AXIS[top.k];
-  const top2 = sorted.slice(0, 2).map((x) => x.k);
-  const bottom2 = sorted.slice(-2).map((x) => x.k);
+  const top2 = sortedHigh.slice(0, 2).map((x) => x.k);
+  const bottom2 = sortedHigh.slice(-2).map((x) => x.k);
 
   return {
-    name: baseType.name,
-    description: baseType.comment,
+    name: archetype.name,
+    description: archetype.comment,
     topAxes: top2,
     bottomAxes: bottom2,
   };
 }
 
-/** Returns the AiLevel from `pool` whose 8-axis vector is most similar to v. */
 export function bestAffinityAi(v: Axes8, pool: AiLevel[]): AiLevel | null {
   if (pool.length === 0) return null;
   let best: AiLevel = pool[0];
@@ -211,7 +235,15 @@ export function bestAffinityAi(v: Axes8, pool: AiLevel[]): AiLevel | null {
   return best;
 }
 
-/** Convenience: turn a top-axis array into a Japanese label list. */
-export function axesToJpList(keys: Array<keyof Axes8>): string {
-  return keys.map((k) => AXIS_LABEL_JP[k]).join(" / ");
+/** Convenience: render top-axis keys as Japanese pole labels (high or low). */
+export function axesToJpList(keys: Array<keyof Axes8>, vec?: Axes8): string {
+  return keys
+    .map((k) => {
+      if (vec) {
+        const pole = vec[k] >= 3 ? AXIS_POLES_JP[k].high : AXIS_POLES_JP[k].low;
+        return pole;
+      }
+      return AXIS_POLES_JP[k].high;
+    })
+    .join(" / ");
 }

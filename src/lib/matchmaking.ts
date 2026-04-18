@@ -84,7 +84,7 @@ export function buildMatchupsInMemory(
   tags.forEach((tag, i) => {
     let targetTier = userTier;
     if (tag === "below") targetTier = Math.max(1, userTier - 1);
-    else if (tag === "above") targetTier = Math.min(5, userTier + 1);
+    else if (tag === "above") targetTier = Math.min(6, userTier + 1);
 
     const candidates = aiLevels.filter(
       (l) => (l.tier ?? tierForId(l.id)) === targetTier && !usedIds.has(l.id)

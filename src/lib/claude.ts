@@ -39,34 +39,57 @@ function formatHistory(
     .join("\n");
 }
 
-/** Per-character desired length window. */
+/** Per-demon desired length window (id 1-20, mirrors PROMPT_OVERRIDES). */
+const LENGTH_WINDOWS: Record<number, { min: number; max: number }> = {
+  1:  { min: 140, max: 180 },
+  2:  { min: 140, max: 180 },
+  3:  { min: 160, max: 200 },
+  4:  { min: 160, max: 200 },
+  5:  { min: 160, max: 200 },
+  6:  { min: 120, max: 180 },
+  7:  { min: 140, max: 180 },
+  8:  { min: 140, max: 180 },
+  9:  { min: 100, max: 160 },
+  10: { min: 160, max: 200 },
+  11: { min: 120, max: 180 },
+  12: { min: 140, max: 180 },
+  13: { min: 120, max: 180 },
+  14: { min: 140, max: 200 },
+  15: { min: 140, max: 180 },
+  16: { min: 100, max: 160 },
+  17: { min: 100, max: 160 },
+  18: { min: 120, max: 180 },
+  19: { min: 80,  max: 120 },
+  20: { min: 60,  max: 100 },
+};
+
 function lengthWindow(level: AiLevel): { min: number; max: number } {
-  switch (level.id) {
-    case 1: return { min: 80, max: 120 };
-    case 2: return { min: 60, max: 100 };
-    case 3: return { min: 120, max: 180 };
-    case 4: return { min: 100, max: 160 };
-    case 5: return { min: 100, max: 160 };
-    case 6: return { min: 140, max: 180 };
-    case 7: return { min: 160, max: 200 };
-    case 8: return { min: 120, max: 180 };
-    case 9: return { min: 140, max: 180 };
-    case 10: return { min: 30, max: 60 };
-    default: return { min: 120, max: 180 };
-  }
+  return LENGTH_WINDOWS[level.id] ?? { min: 120, max: 180 };
 }
 
+/** 8軸 stat block (Stage C). */
 function statBlock(level: AiLevel): string {
-  if (!level.stat_iq) return "";
-  return `IQ:${level.stat_iq}/5  悪辣:${level.stat_venom}/5  機知:${level.stat_wit}/5  深慮:${level.stat_depth}/5`;
+  if (level.ax_reason_madness == null) return "";
+  return [
+    `理性${level.ax_reason_madness}/狂気${6 - level.ax_reason_madness}`,
+    `欲望${level.ax_lust_restraint}/禁欲${6 - (level.ax_lust_restraint ?? 3)}`,
+    `誘惑${level.ax_seduction_directness}/直撃${6 - (level.ax_seduction_directness ?? 3)}`,
+    `奔放${level.ax_chaos_order}/秩序${6 - (level.ax_chaos_order ?? 3)}`,
+    `暴力${level.ax_violence_cunning}/知略${6 - (level.ax_violence_cunning ?? 3)}`,
+    `虚無${level.ax_nihility_obsession}/執着${6 - (level.ax_nihility_obsession ?? 3)}`,
+    `嘲笑${level.ax_mockery_empathy}/同調${6 - (level.ax_mockery_empathy ?? 3)}`,
+    `欺瞞${level.ax_deception_honesty}/直言${6 - (level.ax_deception_honesty ?? 3)}`,
+  ].join(" / ");
 }
 
 function personaSection(level: AiLevel): string {
   const lines: string[] = [];
-  lines.push(`${level.emoji} 名: ${level.name_jp}（獄吏 #${level.id} / Tier ${level.tier ?? "?"}）`);
+  const tierStr = level.tier_letter ?? (level.tier ? `T${level.tier}` : "?");
+  lines.push(`${level.emoji} 名: ${level.name_jp}（ソロモン72柱 #${level.id} / Tier ${tierStr}）`);
+  if (level.rank_label) lines.push(`位階: ${level.rank_label}${level.legions ? ` / ${level.legions}軍団` : ""}`);
   if (level.tagline) lines.push(`概要: ${level.tagline}`);
   const stats = statBlock(level);
-  if (stats) lines.push(`ステータス: ${stats}`);
+  if (stats) lines.push(`8軸ステータス: ${stats}`);
   if (level.personality) lines.push(`性格: ${level.personality}`);
   if (level.specialty) lines.push(`得意: ${level.specialty}`);
   if (level.weakness) lines.push(`弱点: ${level.weakness}`);
@@ -144,7 +167,7 @@ export async function generateAIStatement(
 「${userInput}」
 ${helper ? helperSection(helper) : ""}
 この応答を上記キャラ性格で受け止め、以下を全て満たす出力を返せ:
-- ユーザー応答を 8軸 (data, ethics, emotion, persuasion, flexibility, aggression, calm, humor) で 1-5 評価
+- ユーザー応答を 8軸 (reason_madness, lust_restraint, seduction_directness, chaos_order, violence_cunning, nihility_obsession, mockery_empathy, deception_honesty) で 1-5 評価 (1=後者極が強い、5=前者極が強い、3=中立)
 - ユーザー応答の総合的な強さを 0-100 で評価 (論理性・具体性・説得力)
 - その応答を真正面から受けて、あなたの立場(${aiStanceName}派)を擁護する反撃を放つ`;
 
@@ -184,7 +207,7 @@ JSON のみ。説明文・コードブロック記号不要。
   "statement": "あなたの主張（${min}-${max}字、キャラの口調で）",
   "tone": "強気 / 説得的 / 冷静 / 嘲笑 / 断定 のいずれか",
   "keyPoint": "この主張の最重要ポイント（20字以内）",
-  "user_input_axes": ${isOpening ? "null" : `{ "data":1-5, "ethics":1-5, "emotion":1-5, "persuasion":1-5, "flexibility":1-5, "aggression":1-5, "calm":1-5, "humor":1-5 }`},
+  "user_input_axes": ${isOpening ? "null" : `{ "reason_madness":1-5, "lust_restraint":1-5, "seduction_directness":1-5, "chaos_order":1-5, "violence_cunning":1-5, "nihility_obsession":1-5, "mockery_empathy":1-5, "deception_honesty":1-5 }`},
   "user_input_strength": ${isOpening ? "0" : "0-100 の整数 (ユーザー応答の総合的な強さ)"}
 }`;
 

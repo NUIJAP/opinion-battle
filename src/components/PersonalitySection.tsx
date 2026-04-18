@@ -131,7 +131,7 @@ function Diagnosed({
           {type.description}
         </p>
         <p className="text-[10px] text-slate-500 mt-2">
-          強い軸: {axesToJpList(type.topAxes)} ／ 弱い軸: {axesToJpList(type.bottomAxes)}
+          強い軸: {axesToJpList(type.topAxes, v)} ／ 弱い軸: {axesToJpList(type.bottomAxes, v)}
         </p>
       </div>
 

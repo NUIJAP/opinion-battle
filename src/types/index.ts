@@ -2,38 +2,56 @@
 
 export type StanceSide = "a" | "b";
 
-/** 8-axis vector used for theme/character/user personality math. */
+/**
+ * 8-axis bipolar vector (Phase 3a / Stage C).
+ * Each value is 1-5 representing strength on the FIRST-named pole of the axis:
+ *   1 = fully second pole, 3 = neutral, 5 = fully first pole.
+ *   e.g. reason_madness = 5 → 完全理性, = 1 → 完全狂気.
+ */
 export interface Axes8 {
-  data: number;        // データ力
-  ethics: number;      // 倫理力
-  emotion: number;     // 感情力
-  persuasion: number;  // 説得力
-  flexibility: number; // 柔軟性
-  aggression: number;  // 攻撃性
-  calm: number;        // 冷静さ
-  humor: number;       // ユーモア
+  reason_madness: number;        // 理性 ↔ 狂気
+  lust_restraint: number;        // 欲望 ↔ 禁欲
+  seduction_directness: number;  // 誘惑力 ↔ 直撃力
+  chaos_order: number;           // 奔放 ↔ 秩序
+  violence_cunning: number;      // 暴力 ↔ 知略
+  nihility_obsession: number;    // 虚無 ↔ 執着
+  mockery_empathy: number;       // 嘲笑 ↔ 同調
+  deception_honesty: number;     // 欺瞞 ↔ 直言
 }
 
 export const AXIS_KEYS: ReadonlyArray<keyof Axes8> = [
-  "data",
-  "ethics",
-  "emotion",
-  "persuasion",
-  "flexibility",
-  "aggression",
-  "calm",
-  "humor",
+  "reason_madness",
+  "lust_restraint",
+  "seduction_directness",
+  "chaos_order",
+  "violence_cunning",
+  "nihility_obsession",
+  "mockery_empathy",
+  "deception_honesty",
 ];
 
+/** Per axis: display label of each pole. left = high-value (5), right = low-value (1). */
+export const AXIS_POLES_JP: Record<keyof Axes8, { high: string; low: string }> = {
+  reason_madness:        { high: "理性",   low: "狂気" },
+  lust_restraint:        { high: "欲望",   low: "禁欲" },
+  seduction_directness:  { high: "誘惑力", low: "直撃力" },
+  chaos_order:           { high: "奔放",   low: "秩序" },
+  violence_cunning:      { high: "暴力",   low: "知略" },
+  nihility_obsession:    { high: "虚無",   low: "執着" },
+  mockery_empathy:       { high: "嘲笑",   low: "同調" },
+  deception_honesty:     { high: "欺瞞",   low: "直言" },
+};
+
+/** Compact label combining both poles, used for radar axis labels. */
 export const AXIS_LABEL_JP: Record<keyof Axes8, string> = {
-  data: "データ力",
-  ethics: "倫理力",
-  emotion: "感情力",
-  persuasion: "説得力",
-  flexibility: "柔軟性",
-  aggression: "攻撃性",
-  calm: "冷静さ",
-  humor: "ユーモア",
+  reason_madness:       "理性/狂気",
+  lust_restraint:       "欲望/禁欲",
+  seduction_directness: "誘惑/直撃",
+  chaos_order:          "奔放/秩序",
+  violence_cunning:     "暴力/知略",
+  nihility_obsession:   "虚無/執着",
+  mockery_empathy:      "嘲笑/同調",
+  deception_honesty:    "欺瞞/直言",
 };
 
 export interface Theme {
@@ -64,41 +82,50 @@ export interface AiLevel {
   prompt_hint: string;   // Style instructions injected into Claude prompts
   min_rp_recommended: number;
 
-  // ---- Stage A persona fields ----
-  /** 1-5. Maps the 10 characters into 5 difficulty tiers (2 chars per tier). */
+  // ---- Persona fields (Stage A onwards) ----
+  /** Difficulty tier int 1-6 (D=1, C=2, B=3, A=4, S=5, SS=6). */
   tier?: number;
-  stat_iq?: number;     // 1-5  (legacy 4-axis, kept for backward compat)
-  stat_venom?: number;  // 1-5  悪辣
-  stat_wit?: number;    // 1-5  機知
-  stat_depth?: number;  // 1-5  深慮
+  /** Display tier letter ("D" / "C" / "B" / "A" / "S" / "SS"). Phase 3a. */
+  tier_letter?: string;
+  /** Composite score 1.0-10.0 used for the tier letter. Phase 3a. */
+  composite_score?: number;
+  /** Goetia rank ("King" / "Duke" / "Prince" / "Marquis" / "Earl" / "President"). */
+  rank_label?: string;
+  /** Number of legions commanded in lore. */
+  legions?: number;
+  /** Subscores making up composite_score. */
+  sub_danger?: number;
+  sub_complexity?: number;
+  sub_reach?: number;
+
   personality?: string; // 性格
   specialty?: string;   // 得意
   weakness?: string;    // 弱点
   appearance?: string;  // 外見
   catchphrase?: string; // 決め台詞
 
-  // ---- Stage B 8-axis stats (each 1-5) ----
-  ax_data?: number;
-  ax_ethics?: number;
-  ax_emotion?: number;
-  ax_persuasion?: number;
-  ax_flexibility?: number;
-  ax_aggression?: number;
-  ax_calm?: number;
-  ax_humor?: number;
+  // ---- Stage C 8-axis stats (bipolar, each 1-5; see Axes8 docstring) ----
+  ax_reason_madness?: number;
+  ax_lust_restraint?: number;
+  ax_seduction_directness?: number;
+  ax_chaos_order?: number;
+  ax_violence_cunning?: number;
+  ax_nihility_obsession?: number;
+  ax_mockery_empathy?: number;
+  ax_deception_honesty?: number;
 }
 
-/** 8-axis personality accumulated for a single anon user. */
+/** 8-axis personality accumulated for a single anon user (Stage C). */
 export interface UserStats {
   user_id: string;
-  ax_data: number;
-  ax_ethics: number;
-  ax_emotion: number;
-  ax_persuasion: number;
-  ax_flexibility: number;
-  ax_aggression: number;
-  ax_calm: number;
-  ax_humor: number;
+  ax_reason_madness: number;
+  ax_lust_restraint: number;
+  ax_seduction_directness: number;
+  ax_chaos_order: number;
+  ax_violence_cunning: number;
+  ax_nihility_obsession: number;
+  ax_mockery_empathy: number;
+  ax_deception_honesty: number;
   /** Number of battle deltas folded into this row. <5 = 「判定中」 */
   samples: number;
   updated_at?: string;

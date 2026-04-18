@@ -10,10 +10,10 @@ import {
 import { markMatchupCompleted } from "@/lib/matchmaking";
 import { tierForId, getAllAiLevels } from "@/lib/ai-levels";
 import {
-  AXIS_KEYS,
   type Axes8,
   type SaveBattleRequest,
   type SaveBattleResponse,
+  type UserStats,
 } from "@/types";
 import {
   combineBattleDelta,
@@ -24,24 +24,16 @@ import { ensureAnonUser, getUserRank } from "@/lib/users";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-interface UserStatsRow {
-  user_id: string;
-  ax_data: number;
-  ax_ethics: number;
-  ax_emotion: number;
-  ax_persuasion: number;
-  ax_flexibility: number;
-  ax_aggression: number;
-  ax_calm: number;
-  ax_humor: number;
-  samples: number;
-  updated_at?: string;
-}
-
-const ZERO_STATS = (userId: string): UserStatsRow => ({
+const ZERO_STATS = (userId: string): UserStats => ({
   user_id: userId,
-  ax_data: 0, ax_ethics: 0, ax_emotion: 0, ax_persuasion: 0,
-  ax_flexibility: 0, ax_aggression: 0, ax_calm: 0, ax_humor: 0,
+  ax_reason_madness: 0,
+  ax_lust_restraint: 0,
+  ax_seduction_directness: 0,
+  ax_chaos_order: 0,
+  ax_violence_cunning: 0,
+  ax_nihility_obsession: 0,
+  ax_mockery_empathy: 0,
+  ax_deception_honesty: 0,
   samples: 0,
 });
 
@@ -193,30 +185,16 @@ export async function POST(req: NextRequest) {
         .eq("theme_id", body.theme_id);
     }
 
-    // ---- user_stats fold (Stage B) ----
+    // ---- user_stats fold (Stage C: 8 new bipolar axes) ----
     if (inputAxesList.length > 0 || summonedHelpers.length > 0) {
       const { data: existing } = await supabase
         .from("user_stats")
         .select("*")
         .eq("user_id", userId)
         .maybeSingle();
-      const prev = (existing as UserStatsRow | null) ?? ZERO_STATS(userId);
+      const prev = (existing as UserStats | null) ?? ZERO_STATS(userId);
 
-      const next = foldDelta(
-        {
-          user_id: userId,
-          ax_data: prev.ax_data,
-          ax_ethics: prev.ax_ethics,
-          ax_emotion: prev.ax_emotion,
-          ax_persuasion: prev.ax_persuasion,
-          ax_flexibility: prev.ax_flexibility,
-          ax_aggression: prev.ax_aggression,
-          ax_calm: prev.ax_calm,
-          ax_humor: prev.ax_humor,
-          samples: prev.samples,
-        },
-        battleDelta
-      );
+      const next = foldDelta(prev, battleDelta);
 
       await supabase
         .from("user_stats")
@@ -224,23 +202,20 @@ export async function POST(req: NextRequest) {
           [
             {
               user_id: userId,
-              ax_data: (next as UserStatsRow).ax_data,
-              ax_ethics: (next as UserStatsRow).ax_ethics,
-              ax_emotion: (next as UserStatsRow).ax_emotion,
-              ax_persuasion: (next as UserStatsRow).ax_persuasion,
-              ax_flexibility: (next as UserStatsRow).ax_flexibility,
-              ax_aggression: (next as UserStatsRow).ax_aggression,
-              ax_calm: (next as UserStatsRow).ax_calm,
-              ax_humor: (next as UserStatsRow).ax_humor,
+              ax_reason_madness: next.ax_reason_madness,
+              ax_lust_restraint: next.ax_lust_restraint,
+              ax_seduction_directness: next.ax_seduction_directness,
+              ax_chaos_order: next.ax_chaos_order,
+              ax_violence_cunning: next.ax_violence_cunning,
+              ax_nihility_obsession: next.ax_nihility_obsession,
+              ax_mockery_empathy: next.ax_mockery_empathy,
+              ax_deception_honesty: next.ax_deception_honesty,
               samples: next.samples,
               updated_at: new Date().toISOString(),
             },
           ],
           { onConflict: "user_id" }
         );
-
-      // Touch the linter into thinking AXIS_KEYS is used.
-      void AXIS_KEYS;
     }
 
     if (body.matchup_id) {
