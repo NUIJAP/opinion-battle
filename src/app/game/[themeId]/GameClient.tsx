@@ -196,6 +196,7 @@ export default function GameClient({
     const { battleOver } = applyRoundResponse(aiStanceName, {
       userInput: text,
       userInputAxes: r.userInputAxes ?? null,
+      userLogicStrength: r.userLogicStrength,
       summonedHelperId: helpersSummonedThisRound,
       hpDamageToUser: r.hpDamageToUser,
       hpDamageToAi: r.hpDamageToAi,
@@ -285,7 +286,13 @@ export default function GameClient({
       } catch {
         /* ignore */
       }
-      router.push(`/result/${saveResp.battleId}`);
+      // Stage D / C': if this battle tipped the user into possession, skip the
+      // normal result screen and go to the possession game-over page.
+      if (saveResp.possessedBy) {
+        router.push(`/possessed?demon=${saveResp.possessedBy.demonId}`);
+      } else {
+        router.push(`/result/${saveResp.battleId}`);
+      }
     } catch (err) {
       console.error("[finalize]", err);
       const result = judgeResult(finalUserHp, finalAiHp);

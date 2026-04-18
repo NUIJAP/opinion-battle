@@ -49,6 +49,7 @@ interface GameState {
     payload: {
       userInput: string;
       userInputAxes: Axes8 | null;
+      userLogicStrength?: number;
       summonedHelperId: number | null;
       hpDamageToUser: number;
       hpDamageToAi: number;
@@ -116,6 +117,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       aiStatement: s.currentAiStatement,
       userInput: payload.userInput,
       userInputAxes: payload.userInputAxes,
+      userLogicStrength: payload.userLogicStrength,
       summonedHelperId: payload.summonedHelperId,
       hpDamageToUser: payload.hpDamageToUser,
       hpDamageToAi: payload.hpDamageToAi,

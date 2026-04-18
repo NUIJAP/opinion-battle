@@ -1,12 +1,16 @@
 import { getServerSupabase } from "@/lib/supabase";
-import type { UserRank } from "@/types";
+import type { Axes8, UserRank } from "@/types";
 
-/** Subset of user_stats columns needed by matchmaking / stamina. */
+/** Subset of user_stats columns needed by matchmaking / stamina / possession. */
 export interface UserStatsLite {
   demonAffinity: Record<string, number>;
   battlesToday: number;
   lastBattleDate: string | null;
   possessedByDemonId: number | null;
+  possessedAt: string | null;
+  /** Current 8-axis vector; null values mean user has no samples yet. */
+  axes: Axes8;
+  samples: number;
 }
 
 /**
@@ -76,9 +80,20 @@ export async function getUserStats(userId: string): Promise<UserStatsLite> {
 
   const { data } = await supabase
     .from("user_stats")
-    .select("demon_affinity, battles_today, last_battle_date, possessed_by_demon_id")
+    .select("*")
     .eq("user_id", userId)
     .maybeSingle();
+
+  const emptyAxes: Axes8 = {
+    reason_madness: 0,
+    lust_restraint: 0,
+    seduction_directness: 0,
+    chaos_order: 0,
+    violence_cunning: 0,
+    nihility_obsession: 0,
+    mockery_empathy: 0,
+    deception_honesty: 0,
+  };
 
   if (!data) {
     return {
@@ -86,6 +101,9 @@ export async function getUserStats(userId: string): Promise<UserStatsLite> {
       battlesToday: 0,
       lastBattleDate: null,
       possessedByDemonId: null,
+      possessedAt: null,
+      axes: emptyAxes,
+      samples: 0,
     };
   }
 
@@ -94,11 +112,25 @@ export async function getUserStats(userId: string): Promise<UserStatsLite> {
   const battlesToday =
     lastDate === today ? (data.battles_today as number) ?? 0 : 0;
 
+  const axes: Axes8 = {
+    reason_madness:       (data.ax_reason_madness       as number) ?? 0,
+    lust_restraint:       (data.ax_lust_restraint       as number) ?? 0,
+    seduction_directness: (data.ax_seduction_directness as number) ?? 0,
+    chaos_order:          (data.ax_chaos_order          as number) ?? 0,
+    violence_cunning:     (data.ax_violence_cunning     as number) ?? 0,
+    nihility_obsession:   (data.ax_nihility_obsession   as number) ?? 0,
+    mockery_empathy:      (data.ax_mockery_empathy      as number) ?? 0,
+    deception_honesty:    (data.ax_deception_honesty    as number) ?? 0,
+  };
+
   return {
     demonAffinity: (data.demon_affinity as Record<string, number> | null) ?? {},
     battlesToday,
     lastBattleDate: lastDate,
     possessedByDemonId: (data.possessed_by_demon_id as number | null) ?? null,
+    possessedAt: (data.possessed_at as string | null) ?? null,
+    axes,
+    samples: (data.samples as number) ?? 0,
   };
 }
 

@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ensureAnonUser, getUserRank, getUserStats } from "@/lib/users";
 import { getOrCreateTodayMatchups } from "@/lib/matchmaking";
+import { getAllAiLevels } from "@/lib/ai-levels";
 import { getRankFromRp } from "@/lib/ranking";
-import type { DailyMatchupResponse } from "@/types";
+import type { DailyMatchupResponse, PossessedByInfo } from "@/types";
 
 const DAILY_BATTLE_LIMIT = 3;
 
@@ -27,6 +28,23 @@ export async function GET(req: NextRequest) {
     ]);
     const rankTier = getRankFromRp(rank.rp);
 
+    // Hydrate possessedBy with demon details if present.
+    let possessedBy: PossessedByInfo | null = null;
+    if (stats.possessedByDemonId != null) {
+      const allLevels = await getAllAiLevels();
+      const demon = allLevels.find((l) => l.id === stats.possessedByDemonId);
+      if (demon) {
+        possessedBy = {
+          demonId: demon.id,
+          demonName: demon.name_jp,
+          demonTier: demon.tier_letter ?? "?",
+          appearanceRate: stats.demonAffinity[String(demon.id)] ?? 0,
+          taintSum: 0, // not stored — recomputable on /possessed page if needed
+          possessedAt: stats.possessedAt ?? new Date().toISOString(),
+        };
+      }
+    }
+
     const battlesToday = stats.battlesToday;
     const response: DailyMatchupResponse = {
       userId,
@@ -44,6 +62,7 @@ export async function GET(req: NextRequest) {
         remaining: Math.max(0, DAILY_BATTLE_LIMIT - battlesToday),
         lastBattleDate: stats.lastBattleDate,
       },
+      possessedBy,
     };
     return NextResponse.json(response);
   } catch (err) {

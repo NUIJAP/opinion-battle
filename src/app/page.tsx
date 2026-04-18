@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import type { DailyMatchupResponse, Matchup, StaminaInfo } from "@/types";
 import { getRankFromRp } from "@/lib/ranking";
 import MatchupCard from "@/components/MatchupCard";
 import RankDisplay from "@/components/RankDisplay";
+import CharacterCodePanel from "@/components/CharacterCodePanel";
 
 const USER_ID_KEY = "rongoku.anonUserId";
 
@@ -17,6 +19,8 @@ interface RankSummary {
 }
 
 export default function HomePage() {
+  const router = useRouter();
+  const [userId, setUserId] = useState<string | null>(null);
   const [matchups, setMatchups] = useState<Matchup[] | null>(null);
   const [rank, setRank] = useState<RankSummary | null>(null);
   const [stamina, setStamina] = useState<StaminaInfo | null>(null);
@@ -42,6 +46,14 @@ export default function HomePage() {
         if (data.userId && typeof window !== "undefined") {
           window.localStorage.setItem(USER_ID_KEY, data.userId);
         }
+        setUserId(data.userId);
+
+        // If the user is possessed, redirect to the game-over screen.
+        if (data.possessedBy) {
+          router.push(`/possessed?demon=${data.possessedBy.demonId}`);
+          return;
+        }
+
         setMatchups(data.matchups);
         setRank(data.rank);
         setStamina(data.stamina);
@@ -54,7 +66,7 @@ export default function HomePage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [router]);
 
   const rankTier = rank ? getRankFromRp(rank.rp) : null;
 
@@ -107,6 +119,11 @@ export default function HomePage() {
           </div>
         )}
       </section>
+
+      <CharacterCodePanel
+        userId={userId}
+        totalBattles={rank?.totalBattles ?? 0}
+      />
 
       <footer className="text-center text-[10px] text-slate-600 pt-4">
         Phase 3a Stage D · 20 悪魔 (Goetia) 稼働

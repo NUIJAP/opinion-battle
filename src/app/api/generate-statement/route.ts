@@ -43,6 +43,7 @@ export async function POST(req: NextRequest) {
       tone: result.tone,
       keyPoint: result.keyPoint,
       userInputAxes: result.userInputAxes,
+      userLogicStrength: result.userInputStrength,
       hpDamageToUser: result.hpDamageToUser,
       hpDamageToAi: result.hpDamageToAi,
     };

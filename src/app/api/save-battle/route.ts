@@ -11,6 +11,7 @@ import { markMatchupCompleted } from "@/lib/matchmaking";
 import { tierForId, getAllAiLevels } from "@/lib/ai-levels";
 import {
   type Axes8,
+  type PossessedByInfo,
   type SaveBattleRequest,
   type SaveBattleResponse,
   type UserStats,
@@ -20,6 +21,7 @@ import {
   foldDelta,
 } from "@/lib/affinity";
 import { ensureAnonUser, getUserRank } from "@/lib/users";
+import { boostAffinity, checkPossession } from "@/lib/possession";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -185,9 +187,10 @@ export async function POST(req: NextRequest) {
         .eq("theme_id", body.theme_id);
     }
 
-    // ---- user_stats fold (Stage C axes) + Stage D stamina tick ----
+    // ---- user_stats fold (Stage C axes) + Stage D stamina + affinity + possession ----
     // Always upsert user_stats, even if no axes changed, so battles_today stays
     // accurate for the 1-day-3-battle stamina model.
+    let possessedBy: PossessedByInfo | null = null;
     {
       const { data: existing } = await supabase
         .from("user_stats")
@@ -206,6 +209,46 @@ export async function POST(req: NextRequest) {
       const prevCount = (prev.battles_today ?? 0) as number;
       const newBattlesToday = prevDate === today ? prevCount + 1 : 1;
 
+      // C'-4: helper affinity boost. Each summoned helper +0.10, then renormalize.
+      let affinity = (prev.demon_affinity ?? {}) as Record<string, number>;
+      for (const h of summonedHelpers) {
+        affinity = boostAffinity(affinity, h.id, 0.10);
+      }
+
+      // C'-1: possession check. If already possessed, keep the existing record.
+      const alreadyPossessed = prev.possessed_by_demon_id != null;
+      let newPossessedByDemonId = prev.possessed_by_demon_id ?? null;
+      let newPossessedAt = prev.possessed_at ?? null;
+      if (!alreadyPossessed) {
+        const userAxesNow: Axes8 = {
+          reason_madness:       next.ax_reason_madness,
+          lust_restraint:       next.ax_lust_restraint,
+          seduction_directness: next.ax_seduction_directness,
+          chaos_order:          next.ax_chaos_order,
+          violence_cunning:     next.ax_violence_cunning,
+          nihility_obsession:   next.ax_nihility_obsession,
+          mockery_empathy:      next.ax_mockery_empathy,
+          deception_honesty:    next.ax_deception_honesty,
+        };
+        const result = checkPossession({
+          userAxes: userAxesNow,
+          demonAffinity: affinity,
+          demons: allLevels,
+        });
+        if (result.possessed && result.demonId && result.demonName && result.demonTier) {
+          newPossessedByDemonId = result.demonId;
+          newPossessedAt = new Date().toISOString();
+          possessedBy = {
+            demonId: result.demonId,
+            demonName: result.demonName,
+            demonTier: result.demonTier,
+            appearanceRate: result.appearanceRate ?? 0,
+            taintSum: result.taintSum ?? 0,
+            possessedAt: newPossessedAt,
+          };
+        }
+      }
+
       await supabase
         .from("user_stats")
         .upsert(
@@ -223,6 +266,9 @@ export async function POST(req: NextRequest) {
               samples: next.samples,
               battles_today: newBattlesToday,
               last_battle_date: today,
+              demon_affinity: affinity,
+              possessed_by_demon_id: newPossessedByDemonId,
+              possessed_at: newPossessedAt,
               updated_at: new Date().toISOString(),
             },
           ],
@@ -240,6 +286,7 @@ export async function POST(req: NextRequest) {
       newTotalRp: newRp,
       newRankName: newRankTier.name,
       didRankUp: rankedUp,
+      possessedBy,
     };
     return NextResponse.json(response);
   } catch (err) {

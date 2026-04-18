@@ -197,6 +197,8 @@ export interface BattleRound {
   userInput?: string | null;
   /** Claude-evaluated 8-axis breakdown of the user input. Null if not evaluated. */
   userInputAxes?: Axes8 | null;
+  /** Claude's 0-100 logical strength score for the user input. */
+  userLogicStrength?: number;
   /** AI level id of the helper the user summoned this round (-10 HP). Null if none. */
   summonedHelperId?: number | null;
   /** Damage dealt to user / ai HP this round (post-evaluation). */
@@ -253,6 +255,8 @@ export interface GenerateStatementResponse {
   keyPoint?: string;
   /** Claude's 8-axis evaluation of the user input (null if no input this round). */
   userInputAxes?: Axes8 | null;
+  /** Claude's 0-100 evaluation of the user input's logical / persuasive strength. */
+  userLogicStrength?: number;
   /** HP damage the AI's statement deals to the user this round (0+). */
   hpDamageToUser: number;
   /** HP damage the user's input dealt to the AI this round (0+). */
@@ -299,9 +303,21 @@ export interface SaveBattleResponse {
   newRankName: string;
   /** True if the user just moved up a rank tier. */
   didRankUp: boolean;
+  /** Stage D: non-null if this battle triggered possession (→ redirect to /possessed). */
+  possessedBy?: PossessedByInfo | null;
 }
 
 // ---- Matchup API ----
+
+/** Stage D: possession state snapshot. Non-null = user is possessed by this demon. */
+export interface PossessedByInfo {
+  demonId: number;
+  demonName: string;
+  demonTier: string;
+  appearanceRate: number;
+  taintSum: number;
+  possessedAt: string; // ISO timestamptz
+}
 
 /** Stage D: 1-day stamina model. MVP = warning only (not blocking). */
 export interface StaminaInfo {
@@ -327,4 +343,6 @@ export interface DailyMatchupResponse {
   };
   /** Stage D stamina info. */
   stamina: StaminaInfo;
+  /** Stage D possession state. Null = not possessed. */
+  possessedBy: PossessedByInfo | null;
 }
