@@ -1,0 +1,246 @@
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { getServerSupabase } from "@/lib/supabase";
+import RpBonus from "@/components/RpBonus";
+import type { BattleResult, CounterChoice, Theme } from "@/types";
+
+export const dynamic = "force-dynamic";
+
+interface PageProps {
+  params: { battleId: string };
+  searchParams: {
+    score?: string;
+    result?: string;
+    userHp?: string;
+    aiHp?: string;
+    theme?: string;
+  };
+}
+
+export default async function ResultPage({ params, searchParams }: PageProps) {
+  // Fallback path: if saving failed we get here via /result/local?...
+  if (params.battleId === "local") {
+    return (
+      <ResultView
+        score={Number(searchParams.score ?? 0)}
+        result={(searchParams.result ?? "draw") as "win" | "loss" | "draw"}
+        userHp={Number(searchParams.userHp ?? 0)}
+        aiHp={Number(searchParams.aiHp ?? 0)}
+        themeTitle={searchParams.theme ?? "議論"}
+        roundsWon={undefined}
+        battleHistory={undefined}
+        savedToDb={false}
+      />
+    );
+  }
+
+  const supabase = getServerSupabase();
+  const { data: battle, error } = await supabase
+    .from("battles")
+    .select("*, theme:themes(*)")
+    .eq("id", params.battleId)
+    .single<BattleResult & { theme: Theme }>();
+
+  if (error || !battle) {
+    notFound();
+  }
+
+  return (
+    <ResultView
+      score={battle.score}
+      result={battle.result}
+      userHp={battle.final_user_hp}
+      aiHp={battle.final_ai_hp}
+      themeTitle={battle.theme?.title ?? "議論"}
+      roundsWon={battle.rounds_won}
+      battleHistory={battle.battle_history}
+      savedToDb={true}
+      battleId={params.battleId}
+    />
+  );
+}
+
+interface ResultViewProps {
+  score: number;
+  result: "win" | "loss" | "draw";
+  userHp: number;
+  aiHp: number;
+  themeTitle: string;
+  roundsWon: number | undefined;
+  battleHistory: BattleResult["battle_history"] | undefined;
+  savedToDb: boolean;
+  battleId?: string;
+}
+
+function ResultView({
+  score,
+  result,
+  userHp,
+  aiHp,
+  themeTitle,
+  roundsWon,
+  battleHistory,
+  savedToDb,
+  battleId,
+}: ResultViewProps) {
+  const headline =
+    result === "win"
+      ? { emoji: "🎉", text: "勝利！", color: "text-green-400" }
+      : result === "loss"
+      ? { emoji: "💥", text: "敗北", color: "text-red-400" }
+      : { emoji: "🤝", text: "引き分け", color: "text-yellow-400" };
+
+  const rank = rankFromScore(score);
+
+  // Extract the counter-arguments the user actually threw, with their round numbers.
+  const counters =
+    battleHistory
+      ?.filter((r) => !!r.userCounter)
+      .map((r) => ({ round: r.round, counter: r.userCounter as CounterChoice })) ??
+    [];
+
+  return (
+    <div className="w-full max-w-md mx-auto px-4 py-10 space-y-4">
+      {battleId && <RpBonus battleId={battleId} />}
+
+      <div className="bg-slate-800/70 border border-slate-700 rounded-2xl p-6 shadow-2xl text-center">
+        <p className="text-xs text-slate-400 mb-2">{themeTitle}</p>
+        <div className="text-6xl mb-2">{headline.emoji}</div>
+        <h1 className={`text-3xl font-black mb-6 ${headline.color}`}>
+          {headline.text}
+        </h1>
+
+        <div className="bg-slate-900/50 rounded-xl p-5 mb-6">
+          <p className="text-xs text-slate-400 mb-1">スコア</p>
+          <p className="text-4xl font-black font-mono mb-4">
+            {score.toLocaleString()}
+          </p>
+
+          <div className="flex justify-around text-sm">
+            <div>
+              <p className="text-slate-400 text-xs">ランク</p>
+              <p className="font-bold text-lg">{rank}</p>
+            </div>
+            <div>
+              <p className="text-slate-400 text-xs">最終HP</p>
+              <p className="font-mono">
+                <span className="text-blue-300">{userHp}</span>
+                <span className="text-slate-500"> vs </span>
+                <span className="text-red-300">{aiHp}</span>
+              </p>
+            </div>
+            {roundsWon !== undefined && (
+              <div>
+                <p className="text-slate-400 text-xs">勝ラウンド</p>
+                <p className="font-mono">{roundsWon} / 7</p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="space-y-3">
+          <Link
+            href="/"
+            className="block w-full bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-400 hover:to-purple-500 text-white py-4 rounded-xl text-center font-bold shadow-lg transition-all active:scale-[0.98]"
+          >
+            もう1回プレイ
+          </Link>
+          <ShareButton
+            score={score}
+            themeTitle={themeTitle}
+            topCounter={counters[0]?.counter}
+          />
+        </div>
+
+        {!savedToDb && (
+          <p className="mt-4 text-xs text-amber-400">
+            ⚠️ 結果の保存に失敗したため、ローカル表示です
+          </p>
+        )}
+      </div>
+
+      {/* Highlight: the user's counter-arguments */}
+      {counters.length > 0 && <CounterHighlights counters={counters} />}
+    </div>
+  );
+}
+
+function CounterHighlights({
+  counters,
+}: {
+  counters: Array<{ round: number; counter: CounterChoice }>;
+}) {
+  return (
+    <div className="bg-slate-800/70 border border-slate-700 rounded-2xl p-5 shadow-xl">
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-sm font-bold text-slate-200">
+          ⚔️ あなたの決定打
+          <span className="text-xs text-slate-400 font-normal ml-2">
+            ({counters.length}発)
+          </span>
+        </h2>
+      </div>
+      <p className="text-xs text-slate-400 mb-4 leading-relaxed">
+        反論を選んでAIに刺した瞬間。これがスコアを押し上げた議論です。
+      </p>
+      <div className="space-y-3">
+        {counters.map(({ round, counter }) => (
+          <div
+            key={`${round}-${counter.id}`}
+            className="bg-slate-900/50 border border-slate-700 rounded-xl p-3"
+          >
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-xs text-slate-400 font-mono">
+                Round {round}
+              </span>
+              <span className="text-xs px-2 py-0.5 bg-red-500/20 text-red-300 rounded-full">
+                {counter.angle}
+              </span>
+            </div>
+            <p className="text-sm font-semibold text-slate-100 mb-1">
+              {counter.label}
+            </p>
+            <p className="text-xs text-slate-300 leading-relaxed">
+              「{counter.statement}」
+            </p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ShareButton({
+  score,
+  themeTitle,
+  topCounter,
+}: {
+  score: number;
+  themeTitle: string;
+  topCounter?: CounterChoice;
+}) {
+  // Include the best counter in the share text if the user threw one.
+  const counterLine = topCounter
+    ? `\n決め手: 「${topCounter.label}」(${topCounter.angle})\n`
+    : "\n";
+  const text = `「${themeTitle}」で${score.toLocaleString()}点を取ったぞ。${counterLine}立場BATTLEで俺に勝てる？ #立場BATTLE`;
+  const url = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}`;
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="block w-full bg-slate-700 hover:bg-slate-600 text-white py-3 rounded-xl text-center font-semibold transition-all active:scale-[0.98]"
+    >
+      友人に共有
+    </a>
+  );
+}
+
+function rankFromScore(score: number): string {
+  if (score >= 15000) return "🏆 Master";
+  if (score >= 10000) return "🥇 Gold";
+  if (score >= 7000) return "🥈 Silver";
+  if (score >= 4000) return "🥉 Bronze";
+  return "🎯 Rookie";
+}
